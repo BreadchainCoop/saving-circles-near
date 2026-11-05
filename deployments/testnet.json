@@ -1,0 +1,8 @@
+{
+  "network": "testnet",
+  "contract": "circles.bread-saving-circles.testnet",
+  "token": "usdc.bread-saving-circles.testnet",
+  "token_decimals": 6,
+  "owner": "bread-saving-circles.testnet",
+  "commit": "9204a94"
+}
