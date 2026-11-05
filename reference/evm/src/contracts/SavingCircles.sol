@@ -1,0 +1,629 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+import {OwnableUpgradeable} from '@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol';
+import {ReentrancyGuardUpgradeable} from '@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol';
+import {EIP712Upgradeable} from '@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol';
+import {IERC20} from '@openzeppelin/contracts/token/ERC20/IERC20.sol';
+import {SafeERC20} from '@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol';
+import {ECDSA} from '@openzeppelin/contracts/utils/cryptography/ECDSA.sol';
+
+import {ISavingCircles} from 'interfaces/ISavingCircles.sol';
+
+using SafeERC20 for IERC20;
+
+/**
+ * @title Saving Circles
+ * @notice Simple implementation of a rotating savings and credit association (ROSCA) for ERC20 tokens
+ * @author Breadchain Collective
+ * @author @RonTuretzky
+ * @author bagelface.eth
+ * @author exo404
+ * @author valeriooconte
+ */
+contract SavingCircles is ISavingCircles, ReentrancyGuardUpgradeable, OwnableUpgradeable, EIP712Upgradeable {
+  struct MemberState {
+    bool hasClaimed;
+    uint256 lastDepositRound;
+    uint256 memberIndex;
+  }
+
+  uint256 public constant MINIMUM_MEMBERS = 2;
+  /// @dev Total-member ceiling enforced on every join path (addMembers and
+  ///      redeemInvite), keeping the O(n^2) decommission refund loop bounded
+  uint256 public constant MAX_MEMBERS = 25;
+  string private constant _EIP712_NAME = 'StacksInvite';
+  string private constant _EIP712_VERSION = '1';
+  bytes32 private constant _INVITE_TYPEHASH = keccak256('Invite(uint256 id,uint256 nonce)');
+
+  uint256 public nextId;
+  mapping(uint256 id => Circle circle) public circles;
+  mapping(uint256 id => mapping(address token => uint256 balance)) public balances;
+  mapping(uint256 id => mapping(address member => bool status)) public isMember;
+  mapping(address member => uint256[] ids) public memberCircles;
+  mapping(address token => bool status) public allowedTokens;
+  mapping(uint256 id => mapping(uint256 nonce => bool used)) public usedNonces;
+  mapping(uint256 id => bool active) public isActive;
+  mapping(uint256 id => address[] members) public circleMembers;
+  mapping(uint256 id => mapping(address member => MemberState state)) internal _memberStates;
+  mapping(uint256 id => mapping(uint256 round => mapping(address member => uint256 amount))) public roundDeposits;
+  mapping(uint256 id => bool status) public override isDecommissioned;
+  /// @dev One-based reverse indexes for bounded history removal. Existing proxy memberships require migration.
+  mapping(address member => mapping(uint256 id => uint256 indexPlusOne)) private _memberCircleIndexPlusOne;
+
+  /// @dev Requires circle exists and has not been decommissioned
+  modifier onlyCommissioned(uint256 _id) {
+    if (!_exists(_id) || isDecommissioned[_id]) revert NotCommissioned();
+    _;
+  }
+
+  /// @dev Requires circle exists, including retained decommissioned circles
+  modifier onlyExisting(uint256 _id) {
+    if (!_exists(_id)) revert NotCommissioned();
+    _;
+  }
+
+  /// @dev Requires circle is active by checking the mapping
+  modifier onlyActive(uint256 _id) {
+    if (!isActive[_id]) revert NotActive();
+    _;
+  }
+
+  /// @dev Requires address is a member by checking the mapping
+  modifier onlyMember(uint256 _id, address _member) {
+    if (!isMember[_id][_member]) revert NotMember();
+    _;
+  }
+
+  /// @custom:oz-upgrades-unsafe-allow constructor
+  constructor() {
+    _disableInitializers();
+  }
+
+  /// @inheritdoc ISavingCircles
+  function initialize(address _owner) external override initializer {
+    __EIP712_init(_EIP712_NAME, _EIP712_VERSION);
+    __Ownable_init(_owner);
+    __ReentrancyGuard_init();
+  }
+
+  /// @inheritdoc ISavingCircles
+  function setTokenAllowed(address _token, bool _allowed) external override onlyOwner {
+    allowedTokens[_token] = _allowed;
+
+    emit TokenAllowed(_token, _allowed);
+  }
+
+  /// @inheritdoc ISavingCircles
+  function create(Circle calldata _circle) external override returns (uint256 _id) {
+    _id = nextId++;
+
+    if (circles[_id].owner != address(0)) revert AlreadyExists();
+    if (!allowedTokens[_circle.token]) revert TokenNotAllowed();
+    if (_circle.depositInterval == 0) revert InvalidDepositInterval();
+    if (_circle.depositAmount == 0) revert InvalidDepositAmount();
+    if (_circle.currentIndex != 0) revert InvalidCurrentIndex();
+    if (_circle.owner == address(0)) revert InvalidOwner();
+    if (_circle.effectiveCircleStartTime != 0) revert InvalidCircleStartTime();
+
+    address owner = _circle.owner;
+    isMember[_id][owner] = true;
+    memberCircles[owner].push(_id);
+    _memberCircleIndexPlusOne[owner][_id] = memberCircles[owner].length;
+    circleMembers[_id].push(owner);
+    _memberStates[_id][owner].memberIndex = 0;
+
+    circles[_id] = _circle;
+    emit CircleCreated(_id, _circle.token, _circle.depositAmount, _circle.depositInterval);
+
+    return _id;
+  }
+
+  /// @inheritdoc ISavingCircles
+  function start(uint256 _id) external override nonReentrant onlyCommissioned(_id) {
+    Circle storage _circle = circles[_id];
+    if (isActive[_id]) revert AlreadyActive();
+    if (msg.sender != _circle.owner) revert NotOwner();
+
+    if (circleMembers[_id].length < MINIMUM_MEMBERS) revert InvalidMemberCount();
+
+    _circle.effectiveCircleStartTime = block.timestamp;
+
+    uint256 len = circleMembers[_id].length;
+    uint256 maxDelta = type(uint256).max - _circle.effectiveCircleStartTime;
+    if (_circle.depositInterval > maxDelta / len) revert InvalidDepositInterval();
+    _circle.circleEnd = _circle.effectiveCircleStartTime + (_circle.depositInterval * len);
+
+    isActive[_id] = true;
+    emit CircleStarted(_id);
+  }
+
+  /// @inheritdoc ISavingCircles
+  function deposit(uint256 _id, uint256 _value) external override nonReentrant onlyActive(_id) {
+    _deposit(_id, _value, msg.sender);
+  }
+
+  /// @inheritdoc ISavingCircles
+  function depositFor(uint256 _id, uint256 _value, address _member) external override nonReentrant onlyActive(_id) {
+    _deposit(_id, _value, _member);
+  }
+
+  /// @inheritdoc ISavingCircles
+  function withdraw(uint256 _id) external override nonReentrant onlyMember(_id, msg.sender) onlyActive(_id) {
+    _withdraw(_id, msg.sender);
+  }
+
+  /// @inheritdoc ISavingCircles
+  function withdrawFor(uint256 _id, address _member) external override nonReentrant onlyActive(_id) {
+    _withdraw(_id, _member);
+  }
+
+  /// @inheritdoc ISavingCircles
+  function decommission(uint256 _id) external override nonReentrant onlyActive(_id) onlyMember(_id, msg.sender) {
+    if (!_isDecommissionable(_id)) revert NotDecommissionable();
+
+    address token = circles[_id].token;
+    address[] memory members = circleMembers[_id];
+    uint256 membersLength = members.length;
+
+    isActive[_id] = false;
+    isDecommissioned[_id] = true;
+
+    // Return all funds still held by the contract to the members who deposited them.
+    for (uint256 r = 0; r < membersLength; r++) {
+      address recipient = members[r];
+      if (_memberStates[_id][recipient].hasClaimed) continue; // round already paid out
+
+      for (uint256 i = 0; i < membersLength; i++) {
+        address member = members[i];
+        uint256 amount = roundDeposits[_id][r][member];
+        if (amount == 0) continue;
+
+        roundDeposits[_id][r][member] = 0;
+
+        IERC20(token).safeTransfer(member, amount);
+      }
+    }
+
+    for (uint256 i = 0; i < membersLength; i++) {
+      balances[_id][members[i]] = 0;
+    }
+
+    emit CircleDecommissioned(_id);
+  }
+
+  /// @inheritdoc ISavingCircles
+  function redeemInvite(uint256 _id, uint256 _nonce, bytes calldata _signature) external override nonReentrant {
+    Circle storage _circle = circles[_id];
+
+    if (_circle.owner == address(0) || isDecommissioned[_id]) revert NotCommissioned();
+    if (usedNonces[_id][_nonce]) revert InviteAlreadyUsed();
+    if (isMember[_id][msg.sender]) revert AlreadyMember();
+    if (isActive[_id]) revert AlreadyActive();
+
+    bytes32 _digest = _hashInvite(_id, _nonce);
+    address _signer = ECDSA.recover(_digest, _signature);
+
+    if (_signer != _circle.owner) revert InvalidSigner();
+
+    usedNonces[_id][_nonce] = true;
+
+    address[] storage _circleMembers = circleMembers[_id];
+    if (_circleMembers.length >= MAX_MEMBERS) revert InvalidMemberCount();
+
+    isMember[_id][msg.sender] = true;
+    memberCircles[msg.sender].push(_id);
+    _memberCircleIndexPlusOne[msg.sender][_id] = memberCircles[msg.sender].length;
+    _circleMembers.push(msg.sender);
+    _memberStates[_id][msg.sender].memberIndex = _circleMembers.length - 1;
+
+    emit InviteRedeemed(_id, msg.sender);
+  }
+
+  /// @inheritdoc ISavingCircles
+  function addMembers(uint256 _id, address[] calldata _members) external override nonReentrant onlyCommissioned(_id) {
+    Circle storage _circle = circles[_id];
+
+    // A direct call from the owner is the authorization — the signing-free
+    // counterpart to redeemInvite's EIP-712 check, for wallets (e.g. MiniPay)
+    // that cannot sign typed data.
+    if (msg.sender != _circle.owner) revert NotOwner();
+    // Never-started only: isActive alone would readmit finished circles
+    // (_withdraw resets it once everyone has claimed)
+    if (isActive[_id] || _circle.effectiveCircleStartTime != 0) revert AlreadyActive();
+    if (_members.length == 0) revert InvalidMemberCount();
+
+    address[] storage _circleMembers = circleMembers[_id];
+    if (_circleMembers.length + _members.length > MAX_MEMBERS) revert InvalidMemberCount();
+
+    for (uint256 i = 0; i < _members.length; i++) {
+      address _member = _members[i];
+
+      if (_member == address(0)) revert InvalidMemberAddress();
+      // Also catches duplicates within _members since isMember is set as we go
+      if (isMember[_id][_member]) revert AlreadyMember();
+
+      isMember[_id][_member] = true;
+      memberCircles[_member].push(_id);
+      _memberCircleIndexPlusOne[_member][_id] = memberCircles[_member].length;
+      _circleMembers.push(_member);
+      _memberStates[_id][_member].memberIndex = _circleMembers.length - 1;
+
+      emit MemberAdded(_id, _member);
+    }
+  }
+
+  /// @inheritdoc ISavingCircles
+  function removeMember(uint256 _id, address _member) external override nonReentrant onlyCommissioned(_id) {
+    Circle storage _circle = circles[_id];
+
+    // The owner can undo a mistaken add; the member themselves can decline a
+    // membership they never consented to. Pre-start only, so no deposits or
+    // payout accounting exist yet.
+    if (msg.sender != _circle.owner && msg.sender != _member) revert NotOwner();
+    if (isActive[_id] || _circle.effectiveCircleStartTime != 0) revert AlreadyActive();
+    if (_member == _circle.owner) revert InvalidMemberAddress();
+    if (!isMember[_id][_member]) revert NotMember();
+
+    isMember[_id][_member] = false;
+
+    // Splice out of circleMembers preserving payout order; reindex the tail
+    address[] storage _circleMembers = circleMembers[_id];
+    uint256 _index = _memberStates[_id][_member].memberIndex;
+    uint256 _length = _circleMembers.length;
+
+    for (uint256 i = _index; i + 1 < _length; i++) {
+      address _moved = _circleMembers[i + 1];
+      _circleMembers[i] = _moved;
+      _memberStates[_id][_moved].memberIndex = i;
+    }
+
+    _circleMembers.pop();
+    delete _memberStates[_id][_member];
+
+    // Drop the id from the member's circle list (order is not meaningful here)
+    uint256[] storage _ids = memberCircles[_member];
+
+    uint256 _historyIndex = _memberCircleIndexPlusOne[_member][_id] - 1;
+    uint256 _lastIndex = _ids.length - 1;
+    if (_historyIndex != _lastIndex) {
+      uint256 _movedId = _ids[_lastIndex];
+      _ids[_historyIndex] = _movedId;
+      _memberCircleIndexPlusOne[_member][_movedId] = _historyIndex + 1;
+    }
+    _ids.pop();
+    delete _memberCircleIndexPlusOne[_member][_id];
+
+    emit MemberRemoved(_id, _member);
+  }
+
+  /// @inheritdoc ISavingCircles
+  function getCircle(uint256 _id) external view override onlyExisting(_id) returns (Circle memory _circle) {
+    _circle = circles[_id];
+    _circle.currentIndex = _currentRoundIndex(_circle);
+  }
+
+  /// @inheritdoc ISavingCircles
+  function getCircles(uint256[] calldata _ids) external view returns (Circle[] memory _circles) {
+    _circles = new Circle[](_ids.length);
+
+    for (uint256 i = 0; i < _ids.length; i++) {
+      _circles[i] = circles[_ids[i]];
+      _circles[i].currentIndex = _currentRoundIndex(_circles[i]);
+    }
+  }
+
+  /// @inheritdoc ISavingCircles
+  function getMemberCircles(address _member) external view returns (uint256[] memory _ids) {
+    return memberCircles[_member];
+  }
+
+  /// @inheritdoc ISavingCircles
+  function isTokenAllowed(address _token) external view override returns (bool) {
+    return allowedTokens[_token];
+  }
+
+  /// @inheritdoc ISavingCircles
+  function checkMemberships(address _member, uint256[] calldata _ids) external view returns (bool[] memory _statuses) {
+    _statuses = new bool[](_ids.length);
+
+    for (uint256 i = 0; i < _ids.length; i++) {
+      _statuses[i] = isMember[_ids[i]][_member];
+    }
+
+    return _statuses;
+  }
+
+  /// @inheritdoc ISavingCircles
+  function getMemberBalances(uint256 _id)
+    external
+    view
+    override
+    returns (address[] memory _members, uint256[] memory _balances)
+  {
+    if (!_exists(_id) || isDecommissioned[_id]) revert NotCommissioned();
+
+    Circle memory _circle = circles[_id];
+
+    uint256 currentRound = _currentRoundIndex(_circle);
+    _balances = new uint256[](circleMembers[_id].length);
+    for (uint256 i = 0; i < circleMembers[_id].length; i++) {
+      address member = circleMembers[_id][i];
+      if (_memberStates[_id][member].lastDepositRound == currentRound) {
+        _balances[i] = balances[_id][member];
+      } else {
+        _balances[i] = 0;
+      }
+    }
+
+    return (circleMembers[_id], _balances);
+  }
+
+  /// @inheritdoc ISavingCircles
+  function getCircleMembers(uint256 _id) external view override returns (address[] memory members) {
+    return circleMembers[_id];
+  }
+
+  function isDecommissionable(uint256 _id) external view override returns (bool) {
+    return _isDecommissionable(_id);
+  }
+
+  function hasClaimed(uint256 _id, address _member) external view returns (bool claimed) {
+    return _memberStates[_id][_member].hasClaimed;
+  }
+
+  function lastDepositRound(uint256 _id, address _member) external view returns (uint256 round) {
+    return _memberStates[_id][_member].lastDepositRound;
+  }
+
+  function memberIndex(uint256 _id, address _member) external view returns (uint256 index) {
+    return _memberStates[_id][_member].memberIndex;
+  }
+
+  /// @inheritdoc ISavingCircles
+  function isWithdrawable(uint256 _id) public view override returns (bool) {
+    if (!isActive[_id]) return false;
+    if (_isDecommissionable(_id)) return false;
+
+    address[] memory members = circleMembers[_id];
+    for (uint256 i = 0; i < members.length; i++) {
+      if (_activeClaimableCheck(_id, members[i])) return true;
+    }
+
+    return false;
+  }
+
+  /// @inheritdoc ISavingCircles
+  function isMemberWithdrawable(uint256 _id, address _member) public view override returns (bool) {
+    if (!isActive[_id]) return false;
+    return _claimable(_id, _member);
+  }
+
+  /// @inheritdoc ISavingCircles
+  function currentRoundWithdrawer(uint256 _id) public view override onlyExisting(_id) returns (address) {
+    if (isDecommissioned[_id] || !isActive[_id]) return address(0);
+    Circle memory _circle = circles[_id];
+
+    uint256 currentRound = _currentRoundIndex(_circle);
+    if (currentRound >= circleMembers[_id].length) return address(0);
+    return circleMembers[_id][currentRound];
+  }
+
+  /// @inheritdoc ISavingCircles
+  function circleState(uint256 _id) public view override onlyExisting(_id) returns (CircleState state) {
+    Circle memory _circle = circles[_id];
+    if (isDecommissioned[_id]) {
+      state = CircleState.Decommissioned;
+    } else if (isActive[_id]) {
+      state = CircleState.Active;
+      uint256 currentRound = _currentRoundIndex(_circle);
+      if (currentRound >= circleMembers[_id].length) {
+        state = CircleState.Expired;
+      } else if (currentRound > 0) {
+        uint256 prev = currentRound - 1;
+        if (
+          block.timestamp >= _roundEndTime(_circle, prev)
+            && !_allMembersDepositedForRound(_id, prev, _circle.depositAmount)
+        ) {
+          state = CircleState.MissedDeposit;
+        } else if (!_allMembersDepositedForRound(_id, currentRound, _circle.depositAmount)) {
+          state = CircleState.DepositInProgress;
+        } else {
+          state = CircleState.DepositComplete;
+        }
+      }
+    } else {
+      state = CircleState.NotStarted;
+    }
+  }
+
+  /// @inheritdoc ISavingCircles
+  function roundState(uint256 _id) public view override onlyExisting(_id) returns (RoundState state) {
+    if (isDecommissioned[_id] || !isActive[_id]) return RoundState.NotStarted;
+
+    Circle memory _circle = circles[_id];
+    uint256 currentRound = _currentRoundIndex(_circle);
+
+    if (currentRound >= circleMembers[_id].length) return RoundState.NotStarted;
+
+    if (block.timestamp <= _circle.effectiveCircleStartTime + (currentRound * _circle.depositInterval)) {
+      state = RoundState.NotStarted;
+    }
+    if (_allMembersDepositedForRound(_id, currentRound, _circle.depositAmount)) {
+      if (_claimable(_id, circleMembers[_id][currentRound])) {
+        state = RoundState.Claimable;
+      } else {
+        state = RoundState.Claimed;
+      }
+    } else {
+      state = RoundState.DepositInProgress;
+    }
+  }
+
+  /**
+   * @dev Make a withdrawal from a specified circle.
+   *      Anyone can trigger the payout for a valid member whose turn is withdrawable.
+   */
+  function _withdraw(uint256 _id, address _member) internal onlyMember(_id, _member) {
+    Circle storage _circle = circles[_id];
+
+    if (!_claimable(_id, _member)) revert NotWithdrawable();
+
+    uint256 _withdrawAmount = _circle.depositAmount * (circleMembers[_id].length);
+
+    _memberStates[_id][_member].hasClaimed = true;
+
+    IERC20(_circle.token).safeTransfer(_member, _withdrawAmount);
+
+    emit FundsWithdrawn(_id, _member, _withdrawAmount);
+
+    if (_allMembersClaimed(_id)) {
+      isActive[_id] = false;
+    }
+  }
+
+  /**
+   * @dev Make a deposit into a specified circle
+   *      A deposit must be made in specific time window and can be made partially so long as the final balance equals
+   *      the specified deposit amount for the circle.
+   */
+  function _deposit(
+    uint256 _id,
+    uint256 _value,
+    address _member
+  ) internal onlyCommissioned(_id) onlyMember(_id, _member) {
+    Circle memory _circle = circles[_id];
+
+    if (block.timestamp < circles[_id].effectiveCircleStartTime) {
+      revert DepositBeforeCircleStart();
+    }
+    uint256 currentRound = _currentRoundIndex(_circle);
+    if (currentRound >= circleMembers[_id].length) {
+      revert CircleExpired();
+    }
+
+    if (currentRound > 0) {
+      uint256 prev = currentRound - 1;
+      if (
+        block.timestamp >= _roundEndTime(_circle, prev)
+          && !_allMembersDepositedForRound(_id, prev, _circle.depositAmount)
+      ) {
+        revert CircleTimedOut();
+      }
+    }
+
+    uint256 depositedSoFar = roundDeposits[_id][currentRound][_member];
+    if (depositedSoFar + _value > _circle.depositAmount) revert ExceedsDepositAmount();
+
+    uint256 newTotal = depositedSoFar + _value;
+    roundDeposits[_id][currentRound][_member] = newTotal;
+
+    _memberStates[_id][_member].lastDepositRound = currentRound;
+    balances[_id][_member] = newTotal;
+
+    IERC20(_circle.token).safeTransferFrom(msg.sender, address(this), _value);
+
+    emit FundsDeposited(_id, _member, _value);
+  }
+
+  /**
+   * @dev Return if a specified member can claim from a circle
+   *      Claim eligibility is determined by the time-based round index.
+   */
+  function _claimable(uint256 _id, address _member) internal view onlyCommissioned(_id) returns (bool) {
+    if (_isDecommissionable(_id)) return false;
+    return _activeClaimableCheck(_id, _member);
+  }
+
+  function _activeClaimableCheck(uint256 _id, address _member) internal view returns (bool) {
+    Circle memory _circle = circles[_id];
+    if (_memberStates[_id][_member].hasClaimed) return false;
+
+    uint256 currentRound = _currentRoundIndex(_circle);
+    (uint256 memberIdx, bool found) = _getMemberIndex(_id, _member);
+    if (!found || currentRound < memberIdx) return false;
+
+    return _allMembersDepositedForRound(_id, memberIdx, _circle.depositAmount);
+  }
+
+  /**
+   * @dev Return if a specified circle is decommissionable
+   *      To be considered decommissionable, the previous round's deposit window must have ended
+   *      and that round must have incomplete deposits.
+   */
+  function _isDecommissionable(uint256 _id) internal view returns (bool) {
+    if (!_exists(_id) || isDecommissioned[_id] || !isActive[_id]) return false;
+
+    Circle memory _circle = circles[_id];
+    uint256 len = circleMembers[_id].length;
+    if (len == 0) return false;
+
+    uint256 currentRound = _currentRoundIndex(_circle);
+
+    if (currentRound == 0) return false;
+
+    uint256 checkRound = currentRound - 1;
+
+    if (checkRound >= len) checkRound = len - 1;
+    if (block.timestamp < _roundEndTime(_circle, checkRound)) return false;
+    return !_allMembersDepositedForRound(_id, checkRound, _circle.depositAmount);
+  }
+
+  function _currentRoundIndex(Circle memory _circle) internal view returns (uint256) {
+    if (
+      _circle.depositInterval == 0 || _circle.effectiveCircleStartTime == 0
+        || block.timestamp < _circle.effectiveCircleStartTime
+    ) {
+      return 0;
+    }
+
+    return (block.timestamp - _circle.effectiveCircleStartTime) / _circle.depositInterval;
+  }
+
+  function _allMembersDepositedForRound(
+    uint256 _id,
+    uint256 _round,
+    uint256 _depositAmount
+  ) internal view returns (bool) {
+    address[] memory members = circleMembers[_id];
+    for (uint256 i = 0; i < members.length; i++) {
+      address member = members[i];
+      if (roundDeposits[_id][_round][member] < _depositAmount) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function _getMemberIndex(uint256 _id, address _member) internal view returns (uint256 index, bool found) {
+    if (!isMember[_id][_member]) return (0, false);
+    return (_memberStates[_id][_member].memberIndex, true);
+  }
+
+  function _allMembersClaimed(uint256 _id) internal view returns (bool) {
+    address[] memory members = circleMembers[_id];
+    for (uint256 i = 0; i < members.length; i++) {
+      if (!_memberStates[_id][members[i]].hasClaimed) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function _exists(uint256 _id) internal view returns (bool) {
+    return circles[_id].owner != address(0);
+  }
+
+  function _roundEndTime(Circle memory _circle, uint256 round) internal pure returns (uint256) {
+    return _circle.effectiveCircleStartTime + (_circle.depositInterval * (round + 1));
+  }
+
+  /**
+   * @dev Computes the EIP-712 hash for an invite
+   * @notice _INVITE_TYPEHASH is keccak256('Invite(uint256 id,uint256 nonce)')
+   */
+  function _hashInvite(uint256 _id, uint256 _nonce) private view returns (bytes32) {
+    bytes32 _structHash = keccak256(abi.encode(_INVITE_TYPEHASH, _id, _nonce));
+    return _hashTypedDataV4(_structHash);
+  }
+}

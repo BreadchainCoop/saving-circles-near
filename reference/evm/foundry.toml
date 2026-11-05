@@ -1,0 +1,72 @@
+[fmt]
+line_length = 120
+tab_width = 2
+bracket_spacing = false
+int_types = 'long'
+quote_style = 'single'
+number_underscore = 'thousands'
+multiline_func_header = 'params_first_multi'
+sort_imports = true
+
+[profile.default]
+# Halmos cannot execute the vm.deployCode calls injected by dynamic test linking.
+dynamic_test_linking = false
+via_ir = true
+solc_version = '0.8.28'
+libs = ['node_modules', 'lib']
+remappings = [
+  'forge-std/=node_modules/forge-std/src/',
+  'halmos-cheatcodes/=node_modules/halmos-cheatcodes/',
+  '@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/',
+  '@openzeppelin/contracts-upgradeable/=node_modules/@openzeppelin/contracts-upgradeable/',
+  '@openzeppelin/=node_modules/@openzeppelin/',
+  '@openzeppelin-upgradeable/=node_modules/@openzeppelin/contracts-upgradeable/',
+  'contracts/=src/contracts/',
+  'interfaces/=src/interfaces/',
+  'test/=test/'
+]
+optimizer_runs = 10_000
+
+[profile.optimized]
+via_ir = true
+out = 'out-via-ir'
+
+[profile.test]
+via_ir = true
+out = 'out-via-ir'
+
+[profile.docs]
+src = 'src/interfaces/'
+
+[fuzz]
+runs = 1000
+max_test_rejects = 65536
+seed = '0x3e8'
+dictionary_weight = 40
+include_storage = true
+include_push_bytes = true
+
+[invariant]
+runs = 256
+depth = 15
+fail_on_revert = false
+call_override = false
+dictionary_weight = 80
+include_storage = true
+include_push_bytes = true
+shrink_sequence = true
+
+[rpc_endpoints]
+gnosis = 'https://rpc.gnosis.gateway.fm'
+optimism = 'https://mainnet.optimism.io'
+sepolia = 'https://rpc.sepolia.io'
+celo = 'https://forno.celo.org'
+celo_sepolia = 'https://forno.celo-sepolia.celo-testnet.org'
+polygon = 'https://polygon.drpc.org'
+amoy = 'https://polygon-amoy-bor-rpc.publicnode.com'
+
+[etherscan]
+celo = {key = '${CELOSCAN_API_KEY}', chain = 42220, url = 'https://api.celoscan.io/api'}
+celo_sepolia = {key = '${ETHERSCAN_API_KEY}', chain = 11142220}
+polygon = {key = '${ETHERSCAN_API_KEY}', chain = 137}
+amoy = {key = '${ETHERSCAN_API_KEY}', chain = 80002}

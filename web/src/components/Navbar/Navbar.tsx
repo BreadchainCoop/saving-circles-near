@@ -1,0 +1,47 @@
+"use client";
+
+import { useConnectedUser } from "@breadcoop/ui";
+import { Navbar as BreadNavbar } from "@/components/bread-ui-kit/navbar";
+import { useModal } from "../modal/context";
+import WidgetItems from "./widget-items";
+import ActionItems from "./action-items";
+import NavLinks from "./nav-links";
+import NavDepositButton from "../bread-ui-kit/navbar/nav-deposit-button";
+import { useIsMiniPay } from "@/components/providers/is-minipay";
+import { MINIPAY_ADD_CASH_URL } from "@/utils/minipay";
+
+export function Navbar() {
+  const { user } = useConnectedUser();
+  const { setModal } = useModal();
+  const isMiniPay = useIsMiniPay();
+
+  const openFundFlow = () => {
+    // MiniPay has its own stablecoin rails — deep-link there instead of the
+    // Privy funding modal (Privy is not mounted in the MiniPay stack).
+    if (isMiniPay) {
+      window.location.href = MINIPAY_ADD_CASH_URL;
+      return;
+    }
+
+    if (user.status === "CONNECTED" || user.status === "UNSUPPORTED_CHAIN") {
+      setModal({ type: "FUND_WALLET", address: user.address });
+    }
+  };
+
+  const openWithdrawFlow = () => {
+    setModal({ type: "WITHDRAW_BREAD" });
+  };
+
+  return (
+    <BreadNavbar
+      className="page-layout relative z-30"
+      widgetItems={<WidgetItems />}
+      actionItems={<ActionItems />}
+      depositSlot={<NavDepositButton app="stacks" onClick={openFundFlow} />}
+      onDeposit={openFundFlow}
+      onWithdraw={openWithdrawFlow}
+    >
+      <NavLinks />
+    </BreadNavbar>
+  );
+}

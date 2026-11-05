@@ -1,0 +1,296 @@
+"use client";
+
+import { ReactNode, SubmitEventHandler, useState } from "react";
+import { ModalContainer, ModalHeader, ModalStatus } from "../components";
+import { Label } from "@/components/label";
+import Input from "@/components/input";
+import NumericInput from "@/components/numeric-input";
+import {
+  Body,
+  formatBalance,
+  Logo,
+  TUserConnected,
+  useConnectedUser,
+} from "@breadcoop/ui";
+import { FormattedDecimalNumber } from "@/components/bread-ui-kit/formatted-decimal-number";
+import { useAccount, useReadContract } from "wagmi";
+import { Address, erc20Abi, isAddress } from "viem";
+import LocalButton from "@/components/button";
+import Loading from "@/app/loading";
+import BreadInfoNote from "@/components/bread-info-note";
+import { cn } from "@/lib/utils";
+import { formatDepositAmount, parseDepositAmount } from "@/lib/deposit-token";
+import {
+  useActiveChainId,
+  useDepositToken,
+} from "@/components/providers/active-chain";
+import { formatAmount } from "@/utils/format-amount";
+import { CircularProgressIcon } from "@/components/icons/circular-progress";
+import { ArrowDownIcon } from "@phosphor-icons/react";
+import { useModal } from "../context";
+import { useSimulateAndSponsorTx } from "@/hooks/use-simulate-and-sponsor-tx";
+import { parseContractError } from "@/utils/parse-contract-error";
+
+function SuccessContent({
+  amount,
+  recipient,
+}: {
+  amount: string;
+  recipient: string;
+}) {
+  const depositToken = useDepositToken();
+  const { setModal } = useModal();
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <ModalStatus status="success" statusMsg="Withdrawal Complete" />
+      <Body
+        bold
+        className="flex items-center justify-center border border-paper-2 p-1 gap-2 mt-4"
+      >
+        <Logo size={24} variant="square" />{" "}
+        <FormattedDecimalNumber
+          value={amount}
+          integralPartClassName="text-base"
+          decimalPartClassName="text-xs"
+        />{" "}
+        <span>{depositToken.symbol}</span>
+      </Body>
+      <div>
+        <ArrowDownIcon size={24} className="fill-primary-blue" />
+      </div>
+      <Body className="border border-paper-2 py-3 px-4 bg-paper-1 mb-4">
+        {recipient}
+      </Body>
+      <div className="w-full">
+        <LocalButton
+          onClick={() => setModal(null)}
+          className="bg-surface-grey text-paper-main font-bold cursor-default! w-full"
+          disabled
+        >
+          Close
+        </LocalButton>
+      </div>
+    </div>
+  );
+}
+
+const parseWithdrawError = (error: unknown, symbol: string) =>
+  parseContractError(
+    error,
+    {
+      ERC20InsufficientBalance: `Insufficient ${symbol} balance.`,
+    },
+    "Something went wrong during the withdrawal."
+  );
+
+const WithdrawBreadModal = () => {
+  const depositToken = useDepositToken();
+  const { simulateAndSponsorTx } = useSimulateAndSponsorTx();
+  const [level, setLevel] = useState<"form" | "loading" | "error" | "success">(
+    "form"
+  );
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const { address: recipientAddress, isConnected } = useAccount();
+  const { user } = useConnectedUser();
+  const connectedAddress = (user as TUserConnected).address;
+
+  const [form, setForm] = useState({
+    address: "",
+    amount: "",
+  });
+
+  const { data, isLoading, error } = useReadContract({
+    address: depositToken.address,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: [connectedAddress],
+    chainId: useActiveChainId(),
+    query: {
+      enabled: isConnected && Boolean(connectedAddress),
+    },
+  });
+
+  // Not millified: the Max button writes this string back into the amount input.
+  const balance = data
+    ? formatBalance(Number(formatDepositAmount(data, depositToken.decimals)), 2)
+    : 0;
+  console.log("Balance data", { data, isLoading, error, balance });
+
+  const setRecipientAddress = () => {
+    console.log("Setting connected address", recipientAddress);
+    if (isConnected && recipientAddress) {
+      setForm((prev) => ({ ...prev, address: recipientAddress }));
+    }
+  };
+
+  const setMaxAmount = () => {
+    if (data === undefined) return;
+
+    // Use the raw amount, not the display string — formatBalance output is
+    // comma-grouped, which the parsers reject for balances >= 1000
+    setForm((prev) => ({
+      ...prev,
+      amount: formatDepositAmount(data, depositToken.decimals),
+    }));
+  };
+
+  let buttonWithdrawContent: ReactNode = "Withdraw";
+
+  if (level === "loading") {
+    buttonWithdrawContent = <Loading />;
+  } else if (form.address === "") {
+    buttonWithdrawContent = "Enter Recipient Adress";
+  } else if (!isAddress(form.address)) {
+    buttonWithdrawContent = "Invalid Address";
+  } else if (form.amount === "" || Number(form.amount) <= 0) {
+    buttonWithdrawContent = "Enter Amount";
+  } else if (Number(form.amount) > Number(balance)) {
+    buttonWithdrawContent = "Insufficient Balance";
+  }
+
+  const disableButton =
+    level === "loading" ||
+    (typeof buttonWithdrawContent === "string" &&
+      buttonWithdrawContent !== "Withdraw");
+
+  const withdraw: SubmitEventHandler<HTMLFormElement> = async (e) => {
+    e.preventDefault();
+
+    if (disableButton) return;
+
+    setLevel("loading");
+    setErrorMsg(null);
+
+    const recipientAddress = form.address as Address;
+
+    try {
+      const amountToSend = parseDepositAmount(
+        form.amount,
+        depositToken.decimals
+      );
+
+      const hash = await simulateAndSponsorTx({
+        address: depositToken.address,
+        abi: erc20Abi,
+        functionName: "transfer",
+        args: [recipientAddress, amountToSend],
+      });
+
+      console.log("Transaction sent", { hash });
+      setLevel("success");
+    } catch (error) {
+      console.error("Withdraw error", error);
+      setErrorMsg(parseWithdrawError(error, depositToken.symbol));
+      setLevel("error");
+    }
+  };
+
+  return (
+    <ModalContainer className="max-w-142!">
+      <ModalHeader title="Withdraw" />
+      {level === "success" ? (
+        <SuccessContent amount={form.amount} recipient={recipientAddress!} />
+      ) : level === "error" ? (
+        <>
+          <ModalStatus status="error" statusMsg="Withdrawal Failed" />
+          <Body className="text-center">
+            {errorMsg ?? "Something went wrong during the withdrawal."}
+          </Body>
+          <div className="w-full">
+            <LocalButton
+              onClick={() => setLevel("form")}
+              // className="bg-surface-grey text-paper-main font-bold"
+              className="full"
+            >
+              Try Again
+            </LocalButton>
+          </div>
+        </>
+      ) : (
+        <form className="*:mb-6" onSubmit={withdraw}>
+          <BreadInfoNote>
+            You&apos;re withdrawing <strong>BREAD</strong> — worth $1 each (1:1
+            with USD) — from the Gnosis network. Amounts are shown in USD, but
+            you receive BREAD in your wallet.
+          </BreadInfoNote>
+          <div>
+            <Label htmlFor="address">Recipient Address</Label>
+            <div className="relative">
+              <Input
+                value={form.address}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, address: e.target.value }))
+                }
+                id="address"
+                className="w-full pr-[7.6rem] font-normal text-surface-ink"
+                placeholder="0x"
+              />
+              {isConnected && (
+                <button
+                  type="button"
+                  onClick={setRecipientAddress}
+                  className="absolute right-0 top-1/2 -translate-y-1/2 mr-3 font-bold text-primary-blue text-sm"
+                >
+                  Use connected
+                </button>
+              )}
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="amount">Amount</Label>
+            <div className="relative">
+              <NumericInput
+                value={form.amount}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, amount: e.target.value }))
+                }
+                id="amount"
+                className="w-full pr-[10.3rem]"
+                allowDecimal
+              />
+              <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center justify-end gap-2.5">
+                <div className="bg-paper-main p-1">
+                  <Logo text={depositToken.symbol} size={24} />
+                </div>
+                <button
+                  onClick={setMaxAmount}
+                  type="button"
+                  className={`font-bold mr-3 text-sm transition-colors ${isLoading ? "text-surface-grey" : "text-primary-blue"}`}
+                >
+                  Max.
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center justify-between mt-2 text-surface-grey">
+              <Body className="text-xs">
+                ${formatAmount(Number(form.amount || 0), 2)}
+              </Body>
+              <Body className="text-xs flex items-center justify-end">
+                Balance:{" "}
+                {isLoading ? (
+                  <CircularProgressIcon className="w-4! h-4! ml-1" />
+                ) : (
+                  <>
+                    {balance} {depositToken.symbol}
+                  </>
+                )}
+              </Body>
+            </div>
+          </div>
+          <LocalButton
+            disabled={disableButton}
+            className={cn(
+              "w-full",
+              disableButton ? "bg-surface-grey text-paper-main" : ""
+            )}
+          >
+            {buttonWithdrawContent}
+            {/* <Loading /> */}
+          </LocalButton>
+        </form>
+      )}
+    </ModalContainer>
+  );
+};
+
+export default WithdrawBreadModal;

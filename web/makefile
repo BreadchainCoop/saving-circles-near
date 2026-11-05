@@ -1,0 +1,282 @@
+.PHONY: deploy install-contract-deps anvil fresh-anvil update-env update-contract-submodules update-saving-circles-dev reset-supabase start-local start-fresh-local warp time-increase mine timestamp time-reset
+
+ANVIL_ACCOUNTS := 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 \
+	0x70997970C51812dc3A010C7d01b50e0d17dc79C8 \
+	0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC \
+	0x90F79bf6EB2c4f870365E785982E1f101E93b906 \
+	0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65 \
+	0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc \
+	0x976EA74026E726554dB657fA54763abd0C3a0aa9 \
+	0x14dC79964da2C08b23698B3D3cc7Ca32193d9955 \
+	0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f \
+	0xa0Ee7A142d267C1f36714E4a8F75612F20a79720
+
+# Default values
+RPC_URL ?= http://localhost:8545
+# first anvil's account
+PRIVATE_KEY ?= 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+ADMIN_ADDRESS ?= 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+OZ_UPGRADEABLE_REENTRANCY_COMMIT ?= 5c4c29275d02e06265ce1cfcad5a420b58a5ca02
+SAVING_CIRCLES_BRANCH ?= dev
+SOLC_OPTIMIZER_RUNS ?= 200
+ANVIL_STATE_FILE ?= .anvil/state/app-stacks.json
+
+# Resumes the previous local chain (deployed contracts, stacks, deposits,
+# etc.) if ANVIL_STATE_FILE exists; otherwise starts fresh and begins
+# persisting to it. State is dumped to disk on exit (Ctrl+C) and loaded back
+# on the next `make anvil`. Path is repo-relative and project-named, so it
+# won't collide with another project's own anvil state.
+anvil:
+	@mkdir -p $(dir $(ANVIL_STATE_FILE))
+	anvil --fork-url https://rpc.gnosischain.com --chain-id 31337 --block-time 5 --state $(ANVIL_STATE_FILE)
+
+# Always starts a clean local chain, discarding any previously persisted
+# state. Still persists going forward, so a later `make anvil` resumes from
+# here.
+fresh-anvil:
+	@mkdir -p $(dir $(ANVIL_STATE_FILE))
+	rm -f $(ANVIL_STATE_FILE)
+	anvil --fork-url https://rpc.gnosischain.com --chain-id 31337 --block-time 5 --state $(ANVIL_STATE_FILE)
+
+anvil-reset:
+	@cast rpc anvil_reset --rpc-url $(RPC_URL)
+	@echo "✓ Reset fork to fresh state (run 'make reset-nonces' if nonces are still off)"
+
+reset-nonces:
+	@echo "Resetting nonces for all Anvil accounts..."
+	@for account in $(ANVIL_ACCOUNTS); do \
+		cast rpc anvil_setNonce $$account 0 --rpc-url $(RPC_URL) > /dev/null; \
+		echo "✓ Reset nonce for $$account"; \
+	done
+	@echo "✓ All nonces reset successfully"
+
+install-contract-deps:
+	cd contracts && forge install
+
+deploy:
+	cd contracts && \
+	export RPC_URL=$(RPC_URL) && \
+	export PRIVATE_KEY=$(PRIVATE_KEY) && \
+	export ADMIN_ADDRESS=$(ADMIN_ADDRESS) && \
+	forge script script/Deploy.s.sol:Deploy \
+		--optimize \
+		--optimizer-runs $(SOLC_OPTIMIZER_RUNS) \
+		--rpc-url $(RPC_URL) \
+		--broadcast \
+		--private-key $(PRIVATE_KEY) \
+		--legacy
+	$(MAKE) update-env
+
+# Celo mainnet deployment lives in the saving-circles repo (its own Foundry
+# deploy framework): run `yarn deploy:celo` there, then point this app's
+# NEXT_PUBLIC_* env vars (chain 42220, deposit token symbol/decimals, and the
+# deployed contract addresses) at the result.
+
+update-env:
+	@echo "Updating .env.local with deployed contract addresses..."
+	@if [ ! -f contracts/out/SAVING_CIRCLES_DEPLOYMENT.json ]; then \
+		echo "Error: contracts/out/SAVING_CIRCLES_DEPLOYMENT.json not found"; \
+		exit 1; \
+	fi
+	@if [ ! -f .env.local ]; then \
+		echo "Error: .env.local not found"; \
+		exit 1; \
+	fi
+	$(eval BREAD_TOKEN := $(shell jq -r '.breadToken' contracts/out/SAVING_CIRCLES_DEPLOYMENT.json))
+	$(eval SAVING_CIRCLES_PROXY := $(shell jq -r '.savingCirclesProxy' contracts/out/SAVING_CIRCLES_DEPLOYMENT.json))
+	$(eval SAVING_CIRCLES_VIEWER := $(shell jq -r '.savingCirclesViewer' contracts/out/SAVING_CIRCLES_DEPLOYMENT.json))
+	$(eval AUTOMATIC_SAVING_CIRCLES := $(shell jq -r '.automaticSavingCircles' contracts/out/SAVING_CIRCLES_DEPLOYMENT.json))
+	$(eval CREATION_BLOCK := $(shell cast block latest --rpc-url $(RPC_URL) | grep number | awk '{print $$2}'))
+	$(eval LOCAL_CHAIN_ID := $(shell grep -E '^NEXT_PUBLIC_CHAIN_ID=' .env.local | cut -d= -f2- | tr -d '"'"'"' '))
+	@if [ -z "$(BREAD_TOKEN)" ] || [ "$(BREAD_TOKEN)" = "null" ]; then \
+		echo "Error: Could not parse breadToken from JSON file"; \
+		exit 1; \
+	fi
+	@if [ -z "$(SAVING_CIRCLES_PROXY)" ] || [ "$(SAVING_CIRCLES_PROXY)" = "null" ]; then \
+		echo "Error: Could not parse savingCirclesProxy from JSON file"; \
+		exit 1; \
+	fi
+	@if [ -z "$(SAVING_CIRCLES_VIEWER)" ] || [ "$(SAVING_CIRCLES_VIEWER)" = "null" ]; then \
+		echo "Error: Could not parse savingCirclesViewer from JSON file"; \
+		exit 1; \
+	fi
+	@if [ -z "$(AUTOMATIC_SAVING_CIRCLES)" ] || [ "$(AUTOMATIC_SAVING_CIRCLES)" = "null" ]; then \
+		echo "Error: Could not parse automaticSavingCircles from JSON file"; \
+		exit 1; \
+	fi
+	@if [ -z "$(LOCAL_CHAIN_ID)" ]; then \
+		echo "Error: NEXT_PUBLIC_CHAIN_ID must be set in .env.local"; \
+		exit 1; \
+	fi
+	@sed -i.bak 's|^NEXT_PUBLIC_CHAINS=.*|NEXT_PUBLIC_CHAINS={"$(LOCAL_CHAIN_ID)":{"savingCircles":"$(SAVING_CIRCLES_PROXY)","savingCirclesViewer":"$(SAVING_CIRCLES_VIEWER)","automaticSavingCircles":"$(AUTOMATIC_SAVING_CIRCLES)","contractCreationBlock":"$(CREATION_BLOCK)","depositToken":{"address":"$(BREAD_TOKEN)","symbol":"BREAD","decimals":18}}}|' .env.local
+	@rm -f .env.local.bak
+	@echo "✓ Updated NEXT_PUBLIC_CHAINS for chain $(LOCAL_CHAIN_ID) (creation block $(CREATION_BLOCK))"
+
+update-contract-submodules:
+	git submodule sync --recursive && \
+	git submodule update --init --recursive
+	@# Recover any submodule with invalid HEAD or missing refs
+	@for submodule in $$(git config --file .gitmodules --get-regexp path | awk '{print $$2}'); do \
+		head_file=".git/modules/$$submodule/HEAD"; \
+		if [ -f "$$head_file" ] && grep -q "refs/heads/.invalid" "$$head_file"; then \
+			echo "Detected invalid $$submodule HEAD; reinitializing..."; \
+			git submodule deinit -f "$$submodule" || true; \
+			rm -rf ".git/modules/$$submodule"; \
+			rm -rf "$$submodule"; \
+			git submodule update --init "$$submodule"; \
+		elif ! git -C "$$submodule" rev-parse --verify HEAD >/dev/null 2>&1; then \
+			echo "Detected broken $$submodule checkout; reinitializing..."; \
+			git submodule deinit -f "$$submodule" || true; \
+			rm -rf ".git/modules/$$submodule"; \
+			rm -rf "$$submodule"; \
+			git submodule update --init "$$submodule"; \
+		fi; \
+	done
+	git -C contracts/lib/openzeppelin-contracts-upgradeable fetch origin master && \
+	git -C contracts/lib/openzeppelin-contracts-upgradeable checkout $(OZ_UPGRADEABLE_REENTRANCY_COMMIT)
+	@test -f contracts/lib/openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol || \
+		( echo "Error: missing contracts/lib/openzeppelin-contracts-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol after checkout $(OZ_UPGRADEABLE_REENTRANCY_COMMIT)"; exit 1 )
+	git -C contracts/lib/saving-circles fetch origin $(SAVING_CIRCLES_BRANCH) && \
+	git -C contracts/lib/saving-circles checkout $(SAVING_CIRCLES_BRANCH) && \
+	git -C contracts/lib/saving-circles pull --ff-only origin $(SAVING_CIRCLES_BRANCH)
+
+update-saving-circles-dev:
+	git submodule update --init contracts/lib/saving-circles && \
+	git -C contracts/lib/saving-circles fetch origin $(SAVING_CIRCLES_BRANCH) && \
+	git -C contracts/lib/saving-circles checkout $(SAVING_CIRCLES_BRANCH) && \
+	git -C contracts/lib/saving-circles pull --ff-only origin $(SAVING_CIRCLES_BRANCH)
+
+# Wipes the off-chain stack data so local dev starts from a clean slate.
+# user_stacks is deleted before stacks_metadata to respect the FK (stack_id).
+reset-supabase:
+	@if [ ! -f .env.local ]; then \
+		echo "Error: .env.local not found"; \
+		exit 1; \
+	fi
+	@NODE_ENV=$$(grep -E '^NEXT_PUBLIC_NODE_ENV=' .env.local | cut -d= -f2- | tr -d '"'\'' '); \
+	if [ "$$NODE_ENV" != "local" ]; then \
+		echo "Error: reset-supabase only runs when NEXT_PUBLIC_NODE_ENV=local (got '$$NODE_ENV'). Refusing to wipe a non-local database."; \
+		exit 1; \
+	fi; \
+	SUPABASE_URL=$$(grep -E '^NEXT_PUBLIC_SUPABASE_URL=' .env.local | cut -d= -f2- | tr -d '"'\'' '); \
+	SERVICE_KEY=$$(grep -E '^SUPABASE_SERVICE_ROLE_KEY=' .env.local | cut -d= -f2- | tr -d '"'\'' '); \
+	if [ -z "$$SUPABASE_URL" ] || [ -z "$$SERVICE_KEY" ]; then \
+		echo "Error: NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in .env.local"; \
+		exit 1; \
+	fi; \
+	echo "Clearing off-chain stack data (user_stacks, stacks_metadata)..."; \
+	for entry in "user_stacks:user_id" "stacks_metadata:id"; do \
+		table=$${entry%%:*}; col=$${entry##*:}; \
+		status=$$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+			"$$SUPABASE_URL/rest/v1/$$table?$$col=not.is.null" \
+			-H "apikey: $$SERVICE_KEY" \
+			-H "Authorization: Bearer $$SERVICE_KEY"); \
+		if [ "$$status" != "200" ] && [ "$$status" != "204" ]; then \
+			echo "Error: failed to clear $$table (HTTP $$status)"; \
+			exit 1; \
+		fi; \
+		echo "✓ Cleared $$table"; \
+	done
+
+# Just starts the dev server — use this when anvil (make anvil) and Supabase
+# already have the state you want (contracts deployed, stacks in place).
+start-local:
+	pnpm run dev
+
+# Wipes off-chain data and redeploys contracts before starting dev — use this
+# for first-time setup, after `make fresh-anvil`, or whenever you want a
+# clean slate. Make sure anvil is already running.
+start-fresh-local:
+	$(MAKE) reset-supabase
+	rm -rf contracts/broadcast contracts/cache contracts/out
+	$(MAKE) deploy
+	pnpm run dev
+
+# Time manipulation commands for Anvil
+mine:
+	@cast rpc evm_mine --rpc-url $(RPC_URL)
+	@echo "✓ Mined 1 block"
+
+timestamp:
+	@echo "Current block timestamp:"
+	@cast block latest --rpc-url $(RPC_URL) | grep timestamp
+
+warp:
+	@if [ -z "$(TIMESTAMP)" ]; then \
+		echo "Error: TIMESTAMP parameter required"; \
+		echo "Usage: make warp TIMESTAMP=1735689600"; \
+		exit 1; \
+	fi
+	@cast rpc evm_setNextBlockTimestamp $(TIMESTAMP) --rpc-url $(RPC_URL)
+	@cast rpc evm_mine --rpc-url $(RPC_URL)
+	@echo "✓ Warped to timestamp $(TIMESTAMP)"
+
+time-increase:
+	@if [ -z "$(SECONDS)" ]; then \
+		echo "Error: SECONDS parameter required"; \
+		echo "Usage: make time-increase SECONDS=86400"; \
+		exit 1; \
+	fi
+	@cast rpc evm_increaseTime $(SECONDS) --rpc-url $(RPC_URL)
+	@cast rpc evm_mine --rpc-url $(RPC_URL)
+	@echo "✓ Increased time by $(SECONDS) seconds"
+
+time-reset:
+	@echo "Resetting to current time..."
+	@cast rpc evm_setNextBlockTimestamp $$(date +%s) --rpc-url $(RPC_URL)
+	@cast rpc evm_mine --rpc-url $(RPC_URL)
+	@echo "✓ Reset to current timestamp: $$(date +%s)"
+
+eth ?= __unset__
+bread ?= __unset__
+
+FUND_WALLET_ADDRESS := $(filter-out fund-wallet, $(MAKECMDGOALS))
+
+# Fund one or more wallets with ETH and/or BREAD on the local Anvil chain.
+# Pass any number of 0x addresses; the amounts apply to each one.
+#   make fund-wallet 0xAddr1 [0xAddr2 ...]   # 100 ETH + 100 BREAD each (default)
+#   make fund-wallet 0xAddr1 0xAddr2 eth=50  # 50 ETH each, no BREAD
+#   make fund-wallet 0xAddr1 bread=200       # 200 BREAD each, no ETH
+# Note: eth= and bread= are mutually exclusive — pass neither to fund both.
+fund-wallet:
+	@if [ -z "$(FUND_WALLET_ADDRESS)" ]; then \
+		echo "Error: wallet address required"; \
+		echo "Usage: make fund-wallet 0xAddr1 [0xAddr2 ...] [eth=100] [bread=100]"; \
+		exit 1; \
+	fi
+	@BREAD_TOKEN=$$(jq -r '.breadToken' contracts/out/SAVING_CIRCLES_DEPLOYMENT.json); \
+	FUND_ETH=0; FUND_BREAD=0; \
+	if [ "$(eth)" = "__unset__" ] && [ "$(bread)" = "__unset__" ]; then \
+		FUND_ETH=100; FUND_BREAD=100; \
+	elif [ "$(eth)" != "__unset__" ]; then \
+		FUND_ETH=$(eth); \
+	elif [ "$(bread)" != "__unset__" ]; then \
+		FUND_BREAD=$(bread); \
+	fi; \
+	ETH_WEI_HEX=""; TOKEN_WEI=""; \
+	if [ "$$FUND_ETH" != "0" ]; then ETH_WEI_HEX=$$(printf '0x%x' $$(cast to-wei $$FUND_ETH)); fi; \
+	if [ "$$FUND_BREAD" != "0" ]; then TOKEN_WEI=$$(cast to-wei $$FUND_BREAD); fi; \
+	for WALLET in $(FUND_WALLET_ADDRESS); do \
+		echo "Funding $$WALLET..."; \
+		if [ "$$FUND_ETH" != "0" ]; then \
+			cast rpc anvil_setBalance $$WALLET $$ETH_WEI_HEX --rpc-url $(RPC_URL) > /dev/null; \
+			echo "✓ Set ETH balance to $$FUND_ETH ETH"; \
+		fi; \
+		if [ "$$FUND_BREAD" != "0" ]; then \
+			cast send $$BREAD_TOKEN \
+				"transfer(address,uint256)" \
+				$$WALLET $$TOKEN_WEI \
+				--rpc-url $(RPC_URL) \
+				--private-key $(PRIVATE_KEY) > /dev/null; \
+			echo "✓ Transferred $$FUND_BREAD BREAD to $$WALLET"; \
+		fi; \
+		echo "Balances for $$WALLET:"; \
+		ETH_BAL=$$(cast balance $$WALLET --rpc-url $(RPC_URL) --ether); \
+		BREAD_BAL=$$(cast call $$BREAD_TOKEN 'balanceOf(address)' $$WALLET --rpc-url $(RPC_URL) | cast --to-dec | cast from-wei); \
+		echo "  ETH:   $$ETH_BAL ETH"; \
+		echo "  BREAD: $$BREAD_BAL BREAD"; \
+		echo ""; \
+	done
+
+0x%:
+	@:

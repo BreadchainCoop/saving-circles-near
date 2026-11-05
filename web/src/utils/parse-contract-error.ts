@@ -1,0 +1,70 @@
+import {
+  ContractFunctionRevertedError,
+  ContractFunctionExecutionError,
+} from "viem";
+import { SAVING_CIRCLES_ERRORS } from "@/lib/contract-errors";
+import { InsufficientGasError, isInsufficientFundsError } from "./network-fee";
+
+/**
+ * Converts a raw contract / wagmi error into a human-readable string.
+ *
+ * Resolution order:
+ *  1. Unwrap `ContractFunctionExecutionError` (thrown by `simulateContract`)
+ *     to reach the underlying `ContractFunctionRevertedError`.
+ *  2. Extract the decoded error name and look it up in:
+ *     a. `operationErrors` (caller-supplied, operation-specific map)
+ *     b. `SAVING_CIRCLES_ERRORS` (full contract-level fallback)
+ *  3. Detect user-rejection strings in the error message.
+ *  4. Detect "can't pay the network fee" errors — the pre-send check's
+ *     (./network-fee) or the wallet's and node's — which are not reverts.
+ *  5. String-match the error message against all known error names.
+ *  6. Return `fallback`.
+ */
+export function parseContractError(
+  error: unknown,
+  operationErrors: Record<string, string> = {},
+  fallback = "Transaction failed. Please try again."
+): string {
+  // Step 1 — unwrap the execution wrapper viem adds around simulations
+  const cause =
+    error instanceof ContractFunctionExecutionError ? error.cause : error;
+
+  // Step 2 — inspect the decoded revert
+  if (cause instanceof ContractFunctionRevertedError) {
+    const name = cause.data?.errorName;
+    if (name) {
+      return operationErrors[name] ?? SAVING_CIRCLES_ERRORS[name] ?? fallback;
+    }
+  }
+
+  if (!(error instanceof Error)) return "An unexpected error occurred.";
+
+  // Step 3 — user rejection (wallet prompt dismissed)
+  if (error.message.includes("User rejected"))
+    return "Transaction was rejected.";
+
+  // Step 4 — the sender can't pay the network fee. The pre-send check
+  // already names the chain's gas token.
+  if (error instanceof InsufficientGasError) return error.message;
+
+  // Otherwise the wallet or node refused on cost rather than contract logic.
+  // Nodes phrase this as either "gas required exceeds allowance (N)" — where
+  // N is the gas the sender's balance can buy — or "insufficient funds for
+  // gas * price + value". Both mean the sender cannot pay, and neither is a
+  // revert.
+  const message = error.message.toLowerCase();
+  if (
+    isInsufficientFundsError(error) ||
+    message.includes("gas required exceeds allowance") ||
+    message.includes("insufficient funds")
+  )
+    return "Not enough funds to cover the network fee. Top up your wallet's gas token (xDAI on Gnosis, POL on Polygon) and try again.";
+
+  // Step 5 — string-match fallback for errors viem couldn't decode
+  const combined = { ...SAVING_CIRCLES_ERRORS, ...operationErrors };
+  for (const [name, message] of Object.entries(combined)) {
+    if (error.message.includes(name)) return message;
+  }
+
+  return fallback;
+}

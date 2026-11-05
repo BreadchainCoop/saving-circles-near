@@ -1,0 +1,63 @@
+"use client";
+
+import { DisplayName } from "@/components/display-name";
+import { formatAddress } from "@/utils/address";
+import { getNetwork } from "@/utils/chain";
+import {
+  useActiveChainId,
+  useChainConfig,
+} from "@/components/providers/active-chain";
+import { Body, CopyButtonIcon } from "@breadcoop/ui";
+import { ArrowUpRightIcon } from "@phosphor-icons/react/ssr";
+import { ReactNode } from "react";
+import { Address } from "viem";
+
+const StackInfoRow = ({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) => {
+  return (
+    <div className="bg-paper-1 py-2 px-6 flex items-center justify-between mb-[0.6875rem] last:mb-0">
+      <Body>{label}</Body>
+      <div>{children}</div>
+    </div>
+  );
+};
+
+const StackInfo = ({ owner }: { owner: Address }) => {
+  const chainId = useActiveChainId();
+
+  return (
+    <div className="mt-6.5">
+      <StackInfoRow label="Contract:">
+        <a
+          href={`${getNetwork(chainId).explorerUrl}/${useChainConfig().savingCircles}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-end gap-1"
+        >
+          {formatAddress(useChainConfig().savingCircles)}
+          <ArrowUpRightIcon size={24} className="fill-blue-2" />
+        </a>
+      </StackInfoRow>
+      <StackInfoRow label="Created by:">
+        <Body className="flex items-center justify-end gap-1">
+          <DisplayName address={owner} />
+          <CopyButtonIcon textToCopy={owner} />
+          {/* <CopyButton
+            textToCopy={owner}
+            varaint="icon"
+            className="flex items-center justify-end gap-1"
+          >
+            <CopyIcon size={24} className="fill-blue-2" />
+          </CopyButton> */}
+        </Body>
+      </StackInfoRow>
+    </div>
+  );
+};
+
+export default StackInfo;
