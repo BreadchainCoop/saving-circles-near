@@ -53,7 +53,11 @@ _To be written: a hosted demo link and "do X, see Y" steps a judge can follow._
 
 Baseline code from Bread is listed above. Third-party libraries used by the hackathon work:
 
-_To be listed as they are added._
+| Library | Used for | License |
+|---|---|---|
+| [near-sdk](https://crates.io/crates/near-sdk) 5.30 | Contract framework | MIT OR Apache-2.0 |
+| [near-contract-standards](https://crates.io/crates/near-contract-standards) 5.30 | NEP-141 token interfaces | MIT OR Apache-2.0 |
+| [cargo-near](https://github.com/near/cargo-near) | Building the contract wasm | MIT OR Apache-2.0 |
 
 ## Other submissions
 
