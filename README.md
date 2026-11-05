@@ -57,7 +57,9 @@ _To be listed as they are added._
 
 ## Other submissions
 
-_None. If the team submits a second project, it will be named here (rule Q-015)._
+Bread Cooperative is also submitting
+[sigstack-near](https://github.com/BreadchainCoop/sigstack-near), an independent project
+(rule Q-015).
 
 ## License
 
