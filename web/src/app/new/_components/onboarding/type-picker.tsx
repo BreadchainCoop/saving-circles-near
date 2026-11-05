@@ -1,0 +1,112 @@
+"use client";
+
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import {
+  ArrowClockwiseIcon,
+  ArrowRightIcon,
+  FlagBannerFoldIcon,
+  HandCoinsIcon,
+} from "@phosphor-icons/react/ssr";
+import type { Icon } from "@phosphor-icons/react";
+import { Body, cn, Heading2, Heading3 } from "@breadcoop/ui";
+import { ConditionalGrantsGate } from "@/components/conditional-grants-gate";
+import { STACK_TYPE_DESCRIPTIONS, STACK_TYPE_LABELS } from "@/lib/stack-types";
+import BackPage from "@/components/back-page";
+import { useChainPath } from "@/components/providers/active-chain";
+import { StackTypeVideo } from "./stack-type-video";
+
+/** A stack type the picker can start creating. */
+type PickerCard = {
+  StackIcon: Icon;
+  label: string;
+  description: string;
+  href: string;
+  /** Explainer video in public/videos, without extension. */
+  video: string;
+};
+
+const Card = ({ StackIcon, label, description, href, video }: PickerCard) => {
+  const content = (
+    <>
+      <figure className="text-primary-blue">
+        <StackIcon className="size-9" />
+      </figure>
+      <div className="flex-1">
+        <Heading3 className="text-xl leading-6">{label}</Heading3>
+        <Body className="mt-2 text-surface-grey-2">{description}</Body>
+      </div>
+      <ArrowRightIcon className="size-6 shrink-0 text-primary-blue" />
+    </>
+  );
+
+  const className = cn(
+    "card-shadow-border card-shadow-bg p-6 text-left",
+    "transition-colors has-[a:hover]:border-primary-blue"
+  );
+
+  // The video button sits beside the link, not inside it: a button can't be
+  // nested in an anchor.
+  return (
+    <div className={className}>
+      <Link href={href} className="flex items-start gap-4">
+        {content}
+      </Link>
+      <div className="mt-3 pl-13">
+        <StackTypeVideo label={label} video={video} />
+      </div>
+    </div>
+  );
+};
+
+const TypePicker = () => {
+  const params = useSearchParams();
+  const query = params.toString();
+  // Rendered here rather than in page.tsx: the back link has to carry the
+  // active chain, which only a client component can read.
+  const chainHref = useChainPath();
+
+  return (
+    <>
+      <BackPage href={chainHref("/")} label="Return to dashboard" />
+      <section className="max-w-155 mx-auto">
+        <header className="mb-6 text-center">
+          <Heading2 className="text-primary-blue text-2xl leading-6">
+            What kind of stack?
+          </Heading2>
+          <Body className="mt-3 text-surface-grey-2">
+            What kind of stack would you like to create?
+          </Body>
+        </header>
+
+        <div className="flex flex-col gap-4">
+          <Card
+            StackIcon={ArrowClockwiseIcon}
+            label={STACK_TYPE_LABELS.rosca}
+            description={STACK_TYPE_DESCRIPTIONS.rosca}
+            href={chainHref(query ? `/new/rosca?${query}` : "/new/rosca")}
+            video="rosca"
+          />
+          <Card
+            StackIcon={FlagBannerFoldIcon}
+            label={STACK_TYPE_LABELS.goal}
+            description={STACK_TYPE_DESCRIPTIONS.goal}
+            href={chainHref("/new/goal")}
+            video="goal"
+          />
+          <ConditionalGrantsGate>
+            <Card
+              StackIcon={HandCoinsIcon}
+              label={STACK_TYPE_LABELS.conditionalGrant}
+              description={STACK_TYPE_DESCRIPTIONS.conditionalGrant}
+              href={chainHref("/new/conditional-grant")}
+              video="conditional-grant"
+            />
+          </ConditionalGrantsGate>
+        </div>
+      </section>
+    </>
+  );
+};
+
+export default TypePicker;

@@ -1,0 +1,303 @@
+import { serverEnv } from "@/lib/envs/server";
+import { createClient } from "@supabase/supabase-js";
+import { Database } from "@/lib/supabase";
+import { NextRequest, NextResponse } from "next/server";
+import { createErrorResponse, verifyUserToken } from "../../utils";
+import { callerOwnsWallet, getStackOwner, isStackMember } from "../authorize";
+import { parseStackMetadataId } from "@/lib/stack-types";
+import { resolveChainId } from "@/lib/envs/server-chains";
+import { type Address } from "viem";
+
+const supabaseAdmin = createClient<Database>(
+  serverEnv.NEXT_PUBLIC_SUPABASE_URL,
+  serverEnv.SUPABASE_SERVICE_ROLE_KEY
+);
+
+const isVerifiedOwner = (req: NextRequest, ownerAddress: Address) =>
+  callerOwnsWallet(req, ownerAddress);
+
+interface CreateJoinRequestBody {
+  circleId: string;
+  walletAddress: string;
+  chainId: number;
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const privyUserId = await verifyUserToken(req);
+    if (!privyUserId) return createErrorResponse("Unauthorized", 401);
+
+    let body: unknown;
+
+    try {
+      body = await req.json();
+    } catch {
+      return createErrorResponse("Invalid JSON in request body");
+    }
+
+    if (!body || typeof body !== "object") {
+      return createErrorResponse("Invalid request body");
+    }
+
+    const { circleId, walletAddress } = body as CreateJoinRequestBody;
+    const chainId = resolveChainId((body as CreateJoinRequestBody).chainId);
+
+    if (chainId === null) {
+      return createErrorResponse("chainId is required and must be configured");
+    }
+
+    if (!circleId || typeof circleId !== "string") {
+      return createErrorResponse("circleId is required and must be a string");
+    }
+
+    if (!walletAddress || typeof walletAddress !== "string") {
+      return createErrorResponse(
+        "walletAddress is required and must be a string"
+      );
+    }
+
+    const { data: user, error: userFetchError } = await supabaseAdmin
+      .from("users")
+      .select("id")
+      .eq("privy_user_id", privyUserId)
+      .single();
+
+    if (userFetchError || !user) {
+      console.error("Failed to fetch user:", userFetchError);
+      return createErrorResponse("Failed to find user", 404);
+    }
+
+    const { data: existing, error: existingFetchError } = await supabaseAdmin
+      .from("join_requests")
+      .select("id, status")
+      .eq("chain_id", chainId)
+      .eq("stack_id", circleId)
+      .eq("wallet_address", walletAddress)
+      .maybeSingle();
+
+    if (existingFetchError) {
+      console.error("Failed to fetch join request:", existingFetchError);
+      return createErrorResponse("Failed to save join request", 500);
+    }
+
+    if (!existing) {
+      const { error: insertError } = await supabaseAdmin
+        .from("join_requests")
+        .insert({
+          chain_id: chainId,
+          stack_id: circleId,
+          user_id: user.id,
+          wallet_address: walletAddress,
+        });
+
+      if (insertError) {
+        console.error("Failed to insert join request:", insertError);
+        return createErrorResponse("Failed to save join request", 500);
+      }
+
+      return NextResponse.json({ success: true, status: "pending" });
+    }
+
+    if (existing.status === "added") {
+      return NextResponse.json({ success: true, status: existing.status });
+    }
+
+    const { error: updateError } = await supabaseAdmin
+      .from("join_requests")
+      .update({ status: "pending" })
+      .eq("id", existing.id);
+
+    if (updateError) {
+      console.error("Failed to update join request:", updateError);
+      return createErrorResponse("Failed to save join request", 500);
+    }
+
+    return NextResponse.json({ success: true, status: "pending" });
+  } catch (err) {
+    console.error("Create join request endpoint error:", err);
+    return createErrorResponse("Internal server error", 500);
+  }
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const circleId = req.nextUrl.searchParams.get("circleId");
+    const requesterWalletAddress = req.nextUrl.searchParams.get(
+      "requesterWalletAddress"
+    );
+
+    if (!circleId) {
+      return createErrorResponse("circleId is required");
+    }
+
+    if (!requesterWalletAddress) {
+      return createErrorResponse("requesterWalletAddress is required");
+    }
+
+    if (!parseStackMetadataId(circleId)) {
+      return createErrorResponse("circleId is not a valid stack id");
+    }
+
+    const chainId = resolveChainId(req.nextUrl.searchParams.get("chainId"));
+
+    if (chainId === null) {
+      return createErrorResponse("chainId is required and must be configured");
+    }
+
+    const isOwner = await isVerifiedOwner(
+      req,
+      await getStackOwner(circleId, chainId)
+    );
+
+    // Anyone can check their own request status — this doesn't leak anyone
+    // else's. Only the verified owner gets the full pending list below.
+    const { data: ownRequest, error: ownRequestError } = await supabaseAdmin
+      .from("join_requests")
+      .select("status")
+      .eq("chain_id", chainId)
+      .eq("stack_id", circleId)
+      .eq("wallet_address", requesterWalletAddress)
+      .maybeSingle();
+
+    if (ownRequestError) {
+      console.error("Failed to fetch own join request:", ownRequestError);
+      return createErrorResponse("Failed to fetch join request status", 500);
+    }
+
+    const ownRequestStatus = ownRequest?.status ?? null;
+
+    if (!isOwner) {
+      return NextResponse.json({
+        success: true,
+        requests: [],
+        ownRequestStatus,
+      });
+    }
+
+    const { data: requests, error: fetchError } = await supabaseAdmin
+      .from("join_requests")
+      .select("id, wallet_address, created_at")
+      .eq("chain_id", chainId)
+      .eq("stack_id", circleId)
+      .eq("status", "pending")
+      .order("created_at", { ascending: true });
+
+    if (fetchError) {
+      console.error("Failed to fetch join requests:", fetchError);
+      return createErrorResponse("Failed to fetch join requests", 500);
+    }
+
+    return NextResponse.json({
+      success: true,
+      requests: requests ?? [],
+      ownRequestStatus,
+    });
+  } catch (err) {
+    console.error("List join requests endpoint error:", err);
+    return createErrorResponse("Internal server error", 500);
+  }
+}
+
+interface DecideJoinRequestBody {
+  requestId: string;
+  status: "added" | "dismissed";
+}
+
+export async function PATCH(req: NextRequest) {
+  try {
+    let body: unknown;
+
+    try {
+      body = await req.json();
+    } catch {
+      return createErrorResponse("Invalid JSON in request body");
+    }
+
+    if (!body || typeof body !== "object") {
+      return createErrorResponse("Invalid request body");
+    }
+
+    const { requestId, status } = body as DecideJoinRequestBody;
+
+    if (!requestId || typeof requestId !== "string") {
+      return createErrorResponse("requestId is required and must be a string");
+    }
+
+    if (status !== "added" && status !== "dismissed") {
+      return createErrorResponse('status must be "added" or "dismissed"');
+    }
+
+    const { data: joinRequest, error: fetchError } = await supabaseAdmin
+      .from("join_requests")
+      .select("chain_id, stack_id, user_id, wallet_address")
+      .eq("id", requestId)
+      .single();
+
+    if (fetchError || !joinRequest) {
+      console.error("Failed to fetch join request:", fetchError);
+      return createErrorResponse("Join request not found", 404);
+    }
+
+    // The chain comes off the row, not the caller: which chain a request
+    // belongs to is server state, and the ownership check below has to run on
+    // the same chain whose rows we are about to write.
+    const chainId = resolveChainId(joinRequest.chain_id);
+
+    if (chainId === null) {
+      console.error("Join request has an unconfigured chain:", joinRequest);
+      return createErrorResponse("Join request chain is not configured", 500);
+    }
+
+    const owner = await getStackOwner(joinRequest.stack_id, chainId);
+
+    if (!(await isVerifiedOwner(req, owner))) {
+      return createErrorResponse("Only the circle owner can do this", 403);
+    }
+
+    if (status === "added") {
+      const isMember = await isStackMember(
+        joinRequest.stack_id,
+        joinRequest.wallet_address as Address,
+        chainId
+      );
+
+      if (!isMember) {
+        return createErrorResponse(
+          "This wallet is not yet a member on-chain",
+          409
+        );
+      }
+
+      const { error: userStackError } = await supabaseAdmin
+        .from("user_stacks")
+        .upsert(
+          {
+            user_id: joinRequest.user_id,
+            chain_id: chainId,
+            stack_id: joinRequest.stack_id,
+          },
+          { onConflict: "user_id,chain_id,stack_id", ignoreDuplicates: true }
+        );
+
+      if (userStackError) {
+        console.error("Failed to insert user_stacks:", userStackError);
+        return createErrorResponse("Failed to save user stack", 500);
+      }
+    }
+
+    const { error: updateError } = await supabaseAdmin
+      .from("join_requests")
+      .update({ status })
+      .eq("id", requestId);
+
+    if (updateError) {
+      console.error("Failed to update join request:", updateError);
+      return createErrorResponse("Failed to update join request", 500);
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    console.error("Decide join request endpoint error:", err);
+    return createErrorResponse("Internal server error", 500);
+  }
+}

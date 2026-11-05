@@ -1,0 +1,121 @@
+import { serverEnv } from "@/lib/envs/server";
+import { createClient } from "@supabase/supabase-js";
+import { Database } from "@/lib/supabase";
+import { resolveChainId } from "@/lib/envs/server-chains";
+import { NextRequest, NextResponse } from "next/server";
+import { createErrorResponse } from "../../utils";
+import { parseStackMetadataId } from "@/lib/stack-types";
+
+const supabaseAdmin = createClient<Database>(
+  serverEnv.NEXT_PUBLIC_SUPABASE_URL,
+  serverEnv.SUPABASE_SERVICE_ROLE_KEY
+);
+
+interface CreateStackRequestBody {
+  id: string;
+  stackname: string;
+  expected_members: number;
+  privyUserId: string;
+  chainId: number;
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    let body: unknown;
+
+    try {
+      body = await req.json();
+    } catch {
+      return createErrorResponse("Invalid JSON in request body");
+    }
+
+    if (!body || typeof body !== "object") {
+      return createErrorResponse("Invalid request body");
+    }
+
+    const { id, stackname, expected_members, privyUserId } =
+      body as CreateStackRequestBody;
+
+    if (!id || typeof id !== "string") {
+      return createErrorResponse("id is required and must be a string");
+    }
+
+    // Bare on-chain id = rosca; goals are prefixed (goal:<id>) so ids from
+    // different contracts never collide in stacks_metadata.
+    const parsedId = parseStackMetadataId(id);
+
+    if (!parsedId) {
+      return createErrorResponse(
+        "id must be a numeric on-chain id, optionally prefixed with goal:"
+      );
+    }
+
+    if (!stackname || typeof stackname !== "string") {
+      return createErrorResponse("stackname is required and must be a string");
+    }
+
+    if (typeof expected_members !== "number" || expected_members < 1) {
+      return createErrorResponse(
+        "expected_members is required and must be a positive number"
+      );
+    }
+
+    if (!privyUserId || typeof privyUserId !== "string") {
+      return createErrorResponse(
+        "privyUserId is required and must be a string"
+      );
+    }
+
+    const chain_id = resolveChainId((body as CreateStackRequestBody).chainId);
+
+    if (chain_id === null) {
+      return createErrorResponse("chainId is required and must be configured");
+    }
+
+    const { error: stackError } = await supabaseAdmin
+      .from("stacks_metadata")
+      .insert({
+        chain_id,
+        id,
+        stackname,
+        expected_members,
+        stack_type: parsedId.type,
+      });
+
+    // 23505 = unique_violation. The key is (chain_id, id), so this can only be
+    // the same circle on the same chain — a duplicate submission. Treat it as
+    // success rather than failing a request that already succeeded once.
+    // (With `id` alone as the key this also matched the *other* chain's circle
+    // of the same number, and swallowing it handed that stack's name to a new
+    // one. That is why the chain is part of the key.)
+    if (stackError && stackError.code !== "23505") {
+      console.error("Failed to insert stack metadata:", stackError);
+      return createErrorResponse("Failed to save stack metadata", 500);
+    }
+
+    const { data: user, error: userFetchError } = await supabaseAdmin
+      .from("users")
+      .select("id")
+      .eq("privy_user_id", privyUserId)
+      .single();
+
+    if (userFetchError || !user) {
+      console.error("Failed to fetch user:", userFetchError);
+      return createErrorResponse("Failed to find user", 404);
+    }
+
+    const { error: userStackError } = await supabaseAdmin
+      .from("user_stacks")
+      .insert({ user_id: user.id, chain_id, stack_id: id });
+
+    if (userStackError && userStackError.code !== "23505") {
+      console.error("Failed to insert user_stacks:", userStackError);
+      return createErrorResponse("Failed to save user stack", 500);
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    console.error("Create stack endpoint error:", err);
+    return createErrorResponse("Internal server error", 500);
+  }
+}

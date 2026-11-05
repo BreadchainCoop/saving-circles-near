@@ -1,0 +1,60 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env*.local
+.env
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# Foundry artifacts
+out/
+cache/
+broadcast/
+
+# Local anvil chain state (make anvil / make fresh-anvil)
+/.anvil/
+# Local Netlify folder
+.netlify
+
+# supabase cli
+supabase/.temp
+
+# claude
+~/.claude-personal
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/webview-e2e/
+~/.claude-*
+
+# figma
+fig/
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat

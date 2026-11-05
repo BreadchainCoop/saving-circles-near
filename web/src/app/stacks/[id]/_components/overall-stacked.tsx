@@ -1,0 +1,70 @@
+"use client";
+
+import { useFundsDeposited } from "@/hooks/use-funds-deposited";
+import { ICircleStatus } from "@/interfaces/circle";
+import { IFormattedUserCircleStatusResult } from "@/lib/get-user-circle-status";
+import { formatAmount } from "@/utils/format-amount";
+import { Body } from "@breadcoop/ui";
+import { formatDepositAmount } from "@/lib/deposit-token";
+import { useDepositToken } from "@/components/providers/active-chain";
+
+const failedStatuses: ICircleStatus[] = [
+  "decommissioned",
+  "expired",
+  "failed",
+  "finished",
+];
+
+const OverallStacked = ({
+  circleId,
+  status,
+  totalAmountStackedByMembers,
+  totalRounds,
+  circleStartsTimestamp,
+  depositInterval,
+}: {
+  circleId: string;
+  status: IFormattedUserCircleStatusResult;
+  totalAmountStackedByMembers: string;
+  totalRounds: number;
+  circleStartsTimestamp: bigint;
+  depositInterval: bigint;
+}) => {
+  const depositToken = useDepositToken();
+  const isFailedStack = failedStatuses.includes(status.status);
+
+  const fundsDeposited = useFundsDeposited({
+    circleId: circleId,
+    enabled: isFailedStack,
+    totalRounds,
+    circleStartsTimestamp,
+    depositInterval,
+  });
+
+  if (!isFailedStack) {
+    return <Body>${formatAmount(+totalAmountStackedByMembers, 2)}</Body>;
+  }
+
+  if (fundsDeposited.data) {
+    return (
+      <Body>
+        $
+        {formatAmount(
+          +formatDepositAmount(
+            fundsDeposited.data.totalDeposit,
+            depositToken.decimals
+          ),
+          2
+        )}
+      </Body>
+    );
+  }
+
+  if (fundsDeposited.isLoading) {
+    return <>Loading...</>;
+  }
+
+  return <>-</>;
+};
+
+export default OverallStacked;

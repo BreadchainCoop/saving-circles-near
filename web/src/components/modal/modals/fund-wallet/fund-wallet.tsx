@@ -1,0 +1,129 @@
+"use client";
+
+import { ModalContainer, ModalHeader } from "../../components";
+import FundWithConnectedWallet from "./fund-with-connected-wallet";
+import FundWithLifi from "./fund-with-lifi";
+import { FundWalletModalState, useModal } from "../../context";
+import StacksBalance from "./stacks-balance";
+import { useEffect, useState } from "react";
+import { useWatchFundedXdai } from "@/hooks/use-watch-funded-xdai";
+import { Body, useConnectedUser } from "@breadcoop/ui";
+import Alert from "@/components/alert";
+import BreadInfoNote from "@/components/bread-info-note";
+import { PeerIntentFulfilledResult } from "@zkp2p/sdk";
+import {
+  getChainDetail,
+  isStablecoinChain,
+  networkFeeNote,
+} from "@/utils/chain";
+import { useWalletHost } from "@/components/providers/is-minipay";
+import {
+  useActiveChainId,
+  useDepositToken,
+} from "@/components/providers/active-chain";
+
+const FundWallet = ({ modalState }: { modalState: FundWalletModalState }) => {
+  const depositToken = useDepositToken();
+  // The xDAI/bake mechanic and the LiFi bridge are Gnosis-only rails; on the
+  // stablecoin chains (Celo, Polygon) the modal is a plain deposit-token
+  // transfer.
+  const chainId = useActiveChainId();
+  const isStablecoin = isStablecoinChain(chainId);
+  const chainName = getChainDetail(chainId).name;
+  const feeNote = networkFeeNote(chainId);
+  const [result, _setResult] = useState<PeerIntentFulfilledResult | null>(null);
+  const { setModal } = useModal();
+  const { user } = useConnectedUser();
+  const walletHost = useWalletHost();
+
+  const [listenForXDaiConversion, setListenForXDaiConversion] = useState(false);
+
+  const handleListerForXDai = (v: boolean) => setListenForXDaiConversion(v);
+
+  const handleSkip = () => {
+    setModal(null);
+  };
+
+  useWatchFundedXdai(
+    listenForXDaiConversion && user.status === "CONNECTED"
+      ? user.address
+      : undefined,
+    modalState.onFunded
+  );
+
+  useEffect(() => {
+    return () => {
+      handleListerForXDai(false);
+    };
+  }, []);
+
+  return (
+    <ModalContainer className="bg-[#FDFAF3]! border-paper-1! shadow-[0px_4px_12px_0px_#1B201A26] max-w-140.75!">
+      <ModalHeader title={result ? "Peer Successful" : "Fund your account"} />
+      <Body className="-mt-4">
+        {isStablecoin
+          ? `Send ${depositToken.symbol} to your wallet to deposit into your Stacks`
+          : "Send xDAI to your wallet and automatically get BREAD"}
+      </Body>
+      <BreadInfoNote>
+        You fund with <strong>xDAI</strong> on the Gnosis network, which is
+        automatically converted to <strong>BREAD</strong> — worth $1 each (1:1
+        with USD). Your balance is shown in USD.
+      </BreadInfoNote>
+      <div className={result ? "" : ""}>
+        {result && (
+          <div>
+            <h1>Peer Onramp result:</h1>
+            <p>{JSON.stringify(result, undefined, 2)}</p>
+          </div>
+        )}
+      </div>
+      <div className={result ? "h-0 overflow-hidden" : ""}>
+        <StacksBalance address={modalState.address} />
+        {/* Moving funds from an external wallet into the Privy embedded one.
+            In Nimiq Pay the connected wallet *is* the Stacks wallet, and
+            there is no Privy for its hooks. */}
+        {walletHost === "privy" && (
+          <FundWithConnectedWallet handleListerForXDai={handleListerForXDai} />
+        )}
+        {!isStablecoin && (
+          <div className="*:mb-2">
+            <FundWithLifi address={modalState.address} />
+            {/* <FundWithPeer
+            address={modalState.address}
+            onFunded={modalState.onFunded}
+            showSkipProcess={modalState.showSkipProcess}
+            setResult={setResult}
+          /> */}
+          </div>
+        )}
+        <Alert
+          variant="warning"
+          title={
+            isStablecoin
+              ? `IMPORTANT: Always send ${depositToken.symbol}`
+              : "IMPORTANT: Always get xDAI"
+          }
+          description={
+            isStablecoin
+              ? `The token you need to send to your wallet is ${depositToken.symbol} on ${chainName}.${feeNote ? ` ${feeNote}` : ""}`
+              : "The token you need to send to your wallet is xDAI from Gnosis chain."
+          }
+          closeAble={false}
+          descClassName="text-surface-ink text-left"
+        />
+        {modalState.showSkipProcess && (
+          <button
+            type="button"
+            className="font-bold text-primary-blue mt-6 transition-colors hover:text-blue-2 cursor-pointer"
+            onClick={handleSkip}
+          >
+            Skip this process
+          </button>
+        )}
+      </div>
+    </ModalContainer>
+  );
+};
+
+export default FundWallet;

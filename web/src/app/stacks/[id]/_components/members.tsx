@@ -1,0 +1,158 @@
+"use client";
+
+import { Body, Heading3 } from "@breadcoop/ui";
+import { Icon } from "@phosphor-icons/react";
+import { HourglassIcon, UsersIcon } from "@phosphor-icons/react/ssr";
+import MembersInfo from "./members-info";
+import PendingInviteLink from "@/components/pending-invite-link";
+import { Address } from "viem";
+import { formatDepositAmount } from "@/lib/deposit-token";
+import { useCircleMembersWithBalances } from "@/hooks/use-circle-members";
+import { useJoinRequests } from "@/hooks/use-join-requests";
+import { useStackSupabase } from "@/hooks/use-stack-supabase";
+import { ICircleStatus, MemberCircleInfo } from "@/interfaces/circle";
+import { buildInviteUrl } from "@/components/modal/modals/stack-result";
+import {
+  useActiveChainId,
+  useChainPath,
+  useDepositToken,
+} from "@/components/providers/active-chain";
+import { isNimiqPayChain, nimiqPayOpenLink } from "@/utils/nimiq-pay";
+
+const TopRowInfo = ({
+  LIcon,
+  title,
+  value,
+}: {
+  LIcon: Icon;
+  title: string;
+  value: string | number;
+}) => {
+  return (
+    <div className="flex items-center justify-start gap-1.5 p-2">
+      <LIcon size={24} className="fill-blue-2" />
+      <Body className="text-surface-grey-2">{title}</Body>
+      <Body className="text-surface-ink">{value}</Body>
+    </div>
+  );
+};
+
+const StackMembers = ({
+  circle,
+  id,
+  member,
+  totalRounds,
+  circleStatus,
+}: {
+  id: string;
+  member: Address;
+  circle: MemberCircleInfo;
+  totalRounds: number;
+  circleStatus: ICircleStatus | null;
+}) => {
+  const chainHref = useChainPath();
+  const chainId = useActiveChainId();
+  const info = useCircleMembersWithBalances(BigInt(id));
+  const isOwner = circle.owner === member;
+
+  const totalMembers = info.isLoading ? "-" : info.members.length;
+  const totalBaseDeposit =
+    +formatDepositAmount(circle.depositAmount, useDepositToken().decimals) *
+    Number(circle.currentIndex);
+
+  const isPendingStart = circleStatus === "pending-start";
+
+  const { data: joinRequestsData, isLoading: isLoadingRequests } =
+    useJoinRequests(id, circle.owner, isOwner && isPendingStart);
+  const pendingJoinRequests = joinRequestsData?.requests ?? [];
+
+  // Caps how many pending requests the owner can accept: the contract itself
+  // only enforces a global 25-member ceiling, not the size the owner actually
+  // configured when creating the stack.
+  const { data: stackMetadata } = useStackSupabase(id, isOwner);
+  const expectedMembers = stackMetadata?.expected_members ?? 0;
+  const remainingSlots =
+    expectedMembers > 0
+      ? Math.max(expectedMembers - info.members.length, 0)
+      : undefined;
+
+  // buildInviteUrl merges into whatever query string chainHref produced; string
+  // concatenation here would emit a second "?".
+  const inviteUrl =
+    isOwner && isPendingStart
+      ? buildInviteUrl(
+          `${typeof window !== "undefined" ? window.location.origin : ""}${chainHref("/stacks/join")}`,
+          id
+        )
+      : null;
+  // A Polygon stack works only in Nimiq Pay, so its link opens there. Only
+  // ever client-side, where the origin above is set.
+  const generalInviteUrl =
+    inviteUrl && isNimiqPayChain(chainId)
+      ? nimiqPayOpenLink(inviteUrl)
+      : inviteUrl;
+
+  return (
+    <section className="p-4 flex flex-col gap-4">
+      <header>
+        <Heading3 className="pb-1 leading-[100%] text-2xl">
+          Members ({totalMembers})
+        </Heading3>
+      </header>
+
+      <div className="border-t border-paper-2 pt-4 md:flex md:items-center md:justify-between">
+        <TopRowInfo
+          LIcon={UsersIcon}
+          title="Total Members:"
+          value={totalMembers}
+        />
+
+        {isOwner && (
+          <TopRowInfo
+            LIcon={HourglassIcon}
+            title="Pending:"
+            value={isLoadingRequests ? "..." : pendingJoinRequests.length}
+          />
+        )}
+      </div>
+
+      {generalInviteUrl && (
+        <div className="flex flex-col gap-2">
+          <Body bold>Invite link</Body>
+          <PendingInviteLink
+            link={generalInviteUrl}
+            label="Invite link"
+            shorten={false}
+          />
+          <Body className="text-surface-grey-2 text-xs">
+            Share this link to invite members. You can remove members before
+            launching.
+          </Body>
+          {remainingSlots === 0 && (
+            <Body className="text-system-warning text-xs">
+              This Stack is full ({expectedMembers}/{expectedMembers} members) —
+              dismiss a pending request to free up a spot.
+            </Body>
+          )}
+        </div>
+      )}
+
+      <MembersInfo
+        owner={circle.owner}
+        id={id}
+        info={info}
+        totalBaseDeposit={totalBaseDeposit}
+        depositAmount={circle.depositAmount}
+        pendingJoinRequests={isOwner ? pendingJoinRequests : []}
+        remainingSlots={remainingSlots}
+        totalRounds={totalRounds}
+        circleStartsTimestamp={circle.effectiveCircleStartTime}
+        depositInterval={circle.depositInterval}
+        circleStatus={circleStatus}
+        isOwner={isOwner}
+      />
+    </section>
+  );
+};
+
+export default StackMembers;

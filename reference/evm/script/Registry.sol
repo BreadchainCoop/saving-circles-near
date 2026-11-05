@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+
+/// @dev Example of addresses that may be stored in the Registry for use throughout the repository
+
+// Tokens (Optimism Chain)
+address constant OPTIMISM_DAI = 0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1;
+
+// Tokens (Gnosis Chain)
+address constant GNOSIS_BREAD = 0xa555d5344f6FB6c65da19e403Cb4c1eC4a1a5Ee3;
+address constant GNOSIS_XDAI = 0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d;
+
+// Tokens (Celo Chain) — MiniPay stablecoins
+address constant CELO_USDT = 0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e;
+address constant CELO_USDC = 0xcebA9300f2b948710d2653dD7B07f33A8B32118C;
+address constant CELO_USDM = 0x765DE816845861e75A25fCA122bb6898B8B1282a;
+
+// Tokens (Celo Sepolia Testnet) — MiniPay stablecoins
+address constant CELO_SEPOLIA_USDC = 0x01C5C0122039549AD1493B8220cABEdD739BC44E;
+
+// Tokens (Polygon PoS Chain)
+address constant POLYGON_USDC = 0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359;
+address constant POLYGON_USDT0 = 0xc2132D05D31c914a87C6611C10748AEb04B58e8F;
+
+// Tokens (Polygon Amoy Testnet)
+address constant POLYGON_AMOY_USDC = 0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582;
+
+// Curve Factory (Gnosis Chain)
+address constant GNOSIS_CURVE_STABLE_SWAP_FACTORY = 0xbC0797015fcFc47d9C1856639CaE50D0e69FbEE8;
+
+// Liquidity Pools (Gnosis Chain)
+address constant GNOSIS_CURVE_POOL_XDAI_BREAD = 0xf3D8F3dE71657D342db60dd714c8a2aE37Eac6B4;

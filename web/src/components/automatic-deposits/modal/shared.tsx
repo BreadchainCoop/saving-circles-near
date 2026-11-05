@@ -1,0 +1,91 @@
+"use client";
+
+import { ModalCloseIcon } from "@/components/modal/components";
+import { getChainConfig } from "@/lib/chains";
+import { getNetwork } from "@/utils/chain";
+import {
+  formatSecondsHuman,
+  getIntervalBySeconds,
+} from "@/utils/deposit-interval";
+import { formatAmount } from "@/utils/format-amount";
+import { formatDepositAmount } from "@/lib/deposit-token";
+import { Body, Caption, Logo } from "@breadcoop/ui";
+import { ReactNode } from "react";
+import { DepositTokenConfig } from "@/interfaces/chain-config";
+import { useDepositToken } from "@/components/providers/active-chain";
+
+export const breadLabel = (value: bigint, token: DepositTokenConfig) =>
+  `${formatAmount(Number(formatDepositAmount(value, token.decimals)), 2)} ${token.symbol}`;
+
+export const getIntervalLabels = (depositInterval: bigint) => {
+  const seconds = Number(depositInterval);
+  const intervalLabel =
+    getIntervalBySeconds(seconds)?.label ?? formatSecondsHuman(seconds);
+  const perRoundLabel = intervalLabel.endsWith("ly")
+    ? intervalLabel.slice(0, -2)
+    : intervalLabel;
+
+  return { intervalLabel, perRoundLabel };
+};
+
+export const automaticContractExplorerLink = (chainId: number) => {
+  const explorerBase = getNetwork(chainId)?.explorerUrl;
+  const { automaticSavingCircles } = getChainConfig(chainId);
+
+  return explorerBase ? `${explorerBase}/${automaticSavingCircles}` : undefined;
+};
+
+/**
+ * Right-aligned close button. ModalContainer forces direct children to
+ * full width (`*:w-full`), so the icon is pushed to the right with flex.
+ */
+export const ModalClose = ({ onClick }: { onClick: () => void }) => (
+  <button type="button" onClick={onClick} className="flex justify-end">
+    <ModalCloseIcon />
+  </button>
+);
+
+export const BreadAmount = ({
+  value,
+  highlighted,
+}: {
+  value: bigint;
+  highlighted?: boolean;
+}) => {
+  const depositToken = useDepositToken();
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-1 ${
+        highlighted ? "border border-system-green" : ""
+      }`}
+    >
+      <Logo size={18} variant="square" />
+      <span className="font-bold">{breadLabel(value, depositToken)}</span>
+    </span>
+  );
+};
+
+export const UsdRateCaption = () => (
+  <Caption className="text-surface-grey">
+    1 {useDepositToken().symbol} = 1 USD
+  </Caption>
+);
+
+export const SummaryRow = ({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: ReactNode;
+  children: ReactNode;
+}) => (
+  <div className="flex items-center justify-between gap-2">
+    <Body className="flex items-center gap-1 text-surface-grey">
+      {label}
+      {hint}
+    </Body>
+    <div className="flex items-center gap-1 text-surface-ink">{children}</div>
+  </div>
+);

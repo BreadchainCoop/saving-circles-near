@@ -1,0 +1,195 @@
+"use client";
+
+import { Body, Heading3, useConnectedUser } from "@breadcoop/ui";
+import LoginButton from "@/components/login-button";
+import { FormattedDecimalNumber } from "@/components/bread-ui-kit/formatted-decimal-number";
+import { useCircleStatus } from "@/hooks/use-circle-status";
+import Loading from "@/app/loading";
+import { cn } from "@/lib/utils";
+import { useUserCircleData } from "@/hooks/use-user-circle-data";
+import LastClaim from "./last-claim";
+import { ReactNode } from "react";
+import { Address } from "viem";
+import { formatDepositAmount } from "@/lib/deposit-token";
+import ClaimButton from "@/components/claim-button";
+import { useGetLastClaimed } from "@/hooks/use-get-last-claimed";
+import { formatRelativeTime } from "@/utils/time";
+import { formatAmount } from "@/utils/format-amount";
+import { amountSizeStep } from "@/utils/amount-size";
+import { useBlockTimestamp } from "@/hooks/use-block-timestamp";
+import { AutomaticClaim } from "./automatic-claim";
+import { useCircleState } from "@/hooks/use-circles-state";
+import { CircleState } from "@/lib/circle-state";
+import { useDepositToken } from "@/components/providers/active-chain";
+import {
+  FAILED_STACK_STATUSES,
+  getUserCircleStatus,
+} from "@/lib/get-user-circle-status";
+
+// Steps down a size once the claimable figure gets long, so it doesn't run past
+// the card. See stack-details for the same ladder at the larger hero size.
+const CLAIM_SIZES = {
+  base: { integral: "text-[3rem]", decimal: "text-[2.21rem]" },
+  sm: { integral: "text-[2.25rem]", decimal: "text-[1.66rem]" },
+  xs: { integral: "text-[1.6rem]", decimal: "text-[1.2rem]" },
+} as const;
+
+const TotalStacked = ({
+  id,
+  status,
+}: {
+  id: string;
+  status: ReturnType<typeof useCircleStatus>;
+}) => {
+  const depositToken = useDepositToken();
+  const userCircleData = useUserCircleData({ circleId: BigInt(id) });
+  const { user } = useConnectedUser();
+  const address =
+    user.status === "CONNECTED" || user.status === "UNSUPPORTED_CHAIN"
+      ? user.address
+      : undefined;
+
+  const now = useBlockTimestamp();
+  const { circleState } = useCircleState(BigInt(id));
+  const isFailedStack = userCircleData.circleData
+    ? FAILED_STACK_STATUSES.includes(
+        getUserCircleStatus({
+          circle: userCircleData.circleData,
+          now: BigInt(Math.floor(now / 1000)),
+          circleState: circleState ?? CircleState.Active,
+        }).status
+      )
+    : false;
+
+  const claimableAmount = userCircleData.circleData?.canWithdraw
+    ? userCircleData.circleData?.circleInfo.depositAmount *
+      BigInt(userCircleData.circleData?.totalRounds)
+    : BigInt(0);
+  let amount: string | number = "-";
+
+  let msg: ReactNode = "";
+
+  const circleNotStarted =
+    userCircleData.circleData &&
+    userCircleData.circleData.circleInfo.effectiveCircleStartTime === BigInt(0);
+
+  if (userCircleData.circleData) {
+    if (circleNotStarted) {
+      msg = "You can claim now or  later.";
+    } else {
+      amount = Number(
+        formatDepositAmount(claimableAmount, depositToken.decimals)
+      );
+      msg = "You can claim now or later.";
+    }
+  }
+
+  const claimSize = CLAIM_SIZES[amountSizeStep(Number(amount))];
+
+  return (
+    <section
+      className={cn(
+        "border border-[#CBE9E5] bg-paper-0 py-8 px-5 mb-4.25 md:mb-0 md:order-2 md:flex-1 md:max-w-112.75",
+        !address && "flex flex-col items-center justify-center"
+      )}
+    >
+      <Heading3 className="pb-3.5 border-b border-paper-2 text-center mb-4.25 text-2xl font-bold w-full">
+        Total deposited for you
+      </Heading3>
+      {!address ? (
+        <div className="h-full w-full flex items-center justify-center">
+          <LoginButton app="stacks" status={user.status} />
+        </div>
+      ) : (
+        <>
+          {status.isLoading ? (
+            <div className="flex items-center justify-center">
+              <Loading />
+            </div>
+          ) : (
+            <>
+              <div className="py-4 flex flex-col gap-4 items-center mb-4.25">
+                {amount === "-" ? (
+                  <div>
+                    <span className="text-[3rem] text-surface-ink font-black">
+                      $ -
+                    </span>
+                  </div>
+                ) : (
+                  <FormattedDecimalNumber
+                    value={amount}
+                    unit="$"
+                    integralPartClassName={cn(
+                      claimSize.integral,
+                      "text-surface-ink"
+                    )}
+                    decimalPartClassName={cn(
+                      claimSize.decimal,
+                      "text-surface-grey-2"
+                    )}
+                  />
+                )}
+                <div className="flex flex-col gap-2 items-center -mt-4">
+                  <Body className="text-surface-grey-2">
+                    {amount === "-"
+                      ? "-"
+                      : `$${formatAmount(Number(amount), 2)}`}
+                  </Body>
+                  <Body className="text-xs">{msg}</Body>
+                </div>
+              </div>
+              <LastClaim
+                id={id}
+                effectiveCircleStartTime={
+                  userCircleData.circleData?.circleInfo.effectiveCircleStartTime
+                }
+              />
+
+              {circleNotStarted ? (
+                <Body className="disable-like-btn w-full font-semibold text-paper-main">
+                  Awaiting start
+                </Body>
+              ) : typeof amount === "number" && amount > 0 ? (
+                <ClaimButton
+                  circleId={BigInt(id)}
+                  amount={amount}
+                  label="Claim funds"
+                />
+              ) : (
+                <LastClaimStatus address={address} circleId={id} />
+              )}
+              {userCircleData.circleData?.isMember && (
+                <AutomaticClaim stackId={id} disabled={isFailedStack} />
+              )}
+            </>
+          )}
+        </>
+      )}
+    </section>
+  );
+};
+
+function LastClaimStatus({
+  address,
+  circleId,
+}: {
+  address: Address;
+  circleId: string;
+}) {
+  const now = useBlockTimestamp();
+  const { data } = useGetLastClaimed({
+    circleId,
+    accountAddress: address,
+    enabled: true,
+  });
+
+  if (!data) return null;
+
+  return (
+    <Body className="disable-like-btn font-semibold text-paper-main w-full">
+      Claimed {formatRelativeTime(data.timestamp, new Date(now))}
+    </Body>
+  );
+}
+
+export default TotalStacked;
