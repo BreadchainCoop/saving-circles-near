@@ -40,14 +40,63 @@ not claimed as hackathon work.
 ## Repository layout
 
 ```
-contracts/      NEAR smart contract (Rust, near-sdk) — hackathon work
+contracts/      NEAR smart contract (Rust, near-sdk) and a test token — hackathon work
+scripts/        Testnet deploy and demo seeding — hackathon work
+deployments/    Deployed contract addresses, read by the frontend
 web/            Frontend — baseline, being moved from EVM to NEAR
 reference/evm/  Solidity original — baseline, read-only
 ```
 
 ## Try it
 
-_To be written: a hosted demo link and "do X, see Y" steps a judge can follow._
+_A hosted demo link and "do X, see Y" steps for judges are still to come._
+
+### Testnet deployment
+
+| | Account |
+|---|---|
+| Saving Circles contract | [`circles.bread-saving-circles.testnet`](https://testnet.nearblocks.io/address/circles.bread-saving-circles.testnet) |
+| Test USDC (tUSDC, 6 decimals, open mint) | [`usdc.bread-saving-circles.testnet`](https://testnet.nearblocks.io/address/usdc.bread-saving-circles.testnet) |
+
+Testnet has no canonical USDC, so the deployment uses a test token that anyone can mint, up to
+10,000 tUSDC per call:
+
+```sh
+near contract call-function as-transaction usdc.bread-saving-circles.testnet mint \
+  json-args '{"account_id":"you.testnet","amount":"100000000"}' \
+  prepaid-gas '30.0 Tgas' attached-deposit '0 NEAR' \
+  sign-as you.testnet network-config testnet sign-with-legacy-keychain send
+```
+
+Circle `0` is a live demo circle. Its three members have completed round 0, and the first
+member has been paid. Read it with:
+
+```sh
+near contract call-function as-read-only circles.bread-saving-circles.testnet get_circle \
+  json-args '{"circle_id":"0"}' network-config testnet now
+```
+
+### Build, test and deploy it yourself
+
+Requires Rust, [cargo-near](https://github.com/near/cargo-near) and
+[near-cli-rs](https://github.com/near/near-cli-rs).
+
+```sh
+cd contracts
+cargo near build non-reproducible-wasm
+cargo near build non-reproducible-wasm --manifest-path mock-ft/Cargo.toml
+cargo test --workspace   # unit tests, plus integration tests in a local NEAR sandbox
+cd ..
+
+# A faucet-funded testnet account, then your own deployment and demo circle:
+near account create-account sponsor-by-faucet-service you.testnet \
+  autogenerate-new-keypair save-to-legacy-keychain network-config testnet create
+NEAR_ACCOUNT=you.testnet scripts/deploy-testnet.sh
+NEAR_ACCOUNT=you.testnet scripts/seed-demo.sh
+```
+
+The NEAR sandbox runs on Linux and Apple Silicon only, not on Intel macOS. CI runs every test
+on each pull request.
 
 ## Libraries and tools
 
@@ -58,6 +107,9 @@ Baseline code from Bread is listed above. Third-party libraries used by the hack
 | [near-sdk](https://crates.io/crates/near-sdk) 5.30 | Contract framework | MIT OR Apache-2.0 |
 | [near-contract-standards](https://crates.io/crates/near-contract-standards) 5.30 | NEP-141 token interfaces | MIT OR Apache-2.0 |
 | [cargo-near](https://github.com/near/cargo-near) | Building the contract wasm | MIT OR Apache-2.0 |
+| [near-workspaces](https://crates.io/crates/near-workspaces) 0.24 | Integration tests in a local NEAR sandbox | MIT OR Apache-2.0 |
+| [tokio](https://crates.io/crates/tokio), [anyhow](https://crates.io/crates/anyhow), [serde_json](https://crates.io/crates/serde_json) | Integration test runtime and helpers | MIT (tokio); MIT OR Apache-2.0 |
+| [near-cli-rs](https://github.com/near/near-cli-rs) | Testnet deploy and demo scripts | MIT OR Apache-2.0 |
 
 ## Other submissions
 
