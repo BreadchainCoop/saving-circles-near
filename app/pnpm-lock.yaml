@@ -10,7 +10,7 @@ importers:
     dependencies:
       '@breadcoop/ui':
         specifier: 2.0.5
-        version: 2.0.5(@tanstack/react-query@5.91.2(react@19.1.10))(@types/react-dom@19.1.11(@types/react@19.1.17))(@types/react@19.1.17)(react-dom@19.1.10(react@19.1.10))(react@19.1.10)
+        version: 2.0.5(@phosphor-icons/react@2.1.10(react-dom@19.1.10(react@19.1.10))(react@19.1.10))(@tanstack/react-query@5.91.2(react@19.1.10))(@types/react-dom@19.1.11(@types/react@19.1.17))(@types/react@19.1.17)(react-dom@19.1.10(react@19.1.10))(react@19.1.10)
       '@near-js/transactions':
         specifier: 2.5.1
         version: 2.5.1
@@ -29,6 +29,9 @@ importers:
       '@near-wallet-selector/my-near-wallet':
         specifier: 10.1.4
         version: 10.1.4
+      '@phosphor-icons/react':
+        specifier: 2.1.10
+        version: 2.1.10(react-dom@19.1.10(react@19.1.10))(react@19.1.10)
       '@tanstack/react-query':
         specifier: 5.91.2
         version: 5.91.2(react@19.1.10)
@@ -577,6 +580,13 @@ packages:
   '@nolyfill/is-core-module@1.0.39':
     resolution: {integrity: sha512-nn5ozdjYQpUCZlWGuxcJY/KpxkWQs4DcbMCmKojjyrYDEAGy4Ce19NN4v5MduafTwJlbKc99UA8YhSVqq9yPZA==}
     engines: {node: '>=12.4.0'}
+
+  '@phosphor-icons/react@2.1.10':
+    resolution: {integrity: sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==}
+    engines: {node: '>=10'}
+    peerDependencies:
+      react: '>= 16.8'
+      react-dom: '>= 16.8'
 
   '@radix-ui/primitive@1.2.0':
     resolution: {integrity: sha512-KABY+VMIRPJL+Vyzv/335FEhXXD/xDv8BMb1kl48/aXJZMH0LtHCTx5ga5RnxaEP3nZHtmTLf1P9vanmFX46bw==}
@@ -2546,8 +2556,9 @@ snapshots:
 
   '@alloc/quick-lru@5.3.0': {}
 
-  '@breadcoop/ui@2.0.5(@tanstack/react-query@5.91.2(react@19.1.10))(@types/react-dom@19.1.11(@types/react@19.1.17))(@types/react@19.1.17)(react-dom@19.1.10(react@19.1.10))(react@19.1.10)':
+  '@breadcoop/ui@2.0.5(@phosphor-icons/react@2.1.10(react-dom@19.1.10(react@19.1.10))(react@19.1.10))(@tanstack/react-query@5.91.2(react@19.1.10))(@types/react-dom@19.1.11(@types/react@19.1.17))(@types/react@19.1.17)(react-dom@19.1.10(react@19.1.10))(react@19.1.10)':
     dependencies:
+      '@phosphor-icons/react': 2.1.10(react-dom@19.1.10(react@19.1.10))(react@19.1.10)
       '@radix-ui/react-navigation-menu': 1.4.1(@types/react-dom@19.1.11(@types/react@19.1.17))(@types/react@19.1.17)(react-dom@19.1.10(react@19.1.10))(react@19.1.10)
       '@tanstack/react-query': 5.91.2(react@19.1.10)
       clsx: 2.1.1
@@ -3161,6 +3172,11 @@ snapshots:
       fastq: 1.20.3
 
   '@nolyfill/is-core-module@1.0.39': {}
+
+  '@phosphor-icons/react@2.1.10(react-dom@19.1.10(react@19.1.10))(react@19.1.10)':
+    dependencies:
+      react: 19.1.10
+      react-dom: 19.1.10(react@19.1.10)
 
   '@radix-ui/primitive@1.2.0': {}
 

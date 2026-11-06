@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Saving Circles on NEAR",
   description:
     "Rotating savings circles on NEAR: members deposit each round and one member takes the pot.",
+  icons: { icon: "/favicon.svg" },
 };
 
 export default function RootLayout({

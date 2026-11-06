@@ -69,6 +69,18 @@ const storageFor = (members: number) =>
     ).toFixed(6)
   );
 
+/**
+ * NEAR for `start`: it allocates a members × members matrix of u128 deposits
+ * (16 bytes each, plus a 4-byte length per row) and rejects the call if the
+ * attached NEAR doesn't cover it. Storage costs 10^19 yocto per byte; attach
+ * double plus 0.001 NEAR as headroom. The contract refunds the excess.
+ */
+const startStorage = (members: number) => {
+  const bytes = BigInt(members * (4 + 16 * members));
+  const yoctoPerByte = BigInt(10) ** BigInt(19);
+  return (bytes * yoctoPerByte * BigInt(2) + BigInt(nearToYocto("0.001"))).toString();
+};
+
 export const circleCalls = {
   /** `deposit_amount` in token units (U128 string), `deposit_interval` in ns. */
   create: (args: {
@@ -84,7 +96,8 @@ export const circleCalls = {
       { depositYocto: storageFor(members.length) }
     ),
 
-  start: (circleId: string) => call("start", id(circleId)),
+  start: (circleId: string, memberCount: number) =>
+    call("start", id(circleId), { depositYocto: startStorage(memberCount) }),
 
   withdraw: (circleId: string) =>
     call("withdraw", id(circleId), { gasTGas: GAS.withdraw }),

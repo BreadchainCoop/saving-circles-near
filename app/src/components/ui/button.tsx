@@ -1,81 +1,98 @@
-import type { ButtonHTMLAttributes, CSSProperties } from "react";
+import Link from "next/link";
+import type {
+  ButtonHTMLAttributes,
+  ComponentProps,
+  ReactNode,
+} from "react";
 import { cn } from "@/lib/cn";
+import { Spinner } from "./spinner";
 
-const PRESETS = {
-  primary: {
-    "--btn-bg": "var(--color-primary-orange)",
-    "--btn-text": "var(--color-paper-main)",
-    "--btn-hover-bg": "var(--color-orange-1)",
-    "--btn-hover-text": "#ffffff",
-  },
-  secondary: {
-    "--btn-bg": "#FBDED1",
-    "--btn-text": "var(--color-primary-orange)",
-    "--btn-hover-bg": "#FFF1EA",
-    "--btn-hover-text": "var(--color-primary-orange)",
-  },
-  stroke: {
-    "--btn-bg": "var(--color-paper-main)",
-    "--btn-text": "var(--color-surface-ink)",
-    "--btn-hover-bg": "var(--color-paper-2)",
-    "--btn-hover-text": "var(--color-surface-ink)",
-  },
-  destructive: {
-    "--btn-bg": "var(--color-system-red)",
-    "--btn-text": "var(--color-paper-main)",
-    "--btn-hover-bg": "#BF0A00",
-    "--btn-hover-text": "#ffffff",
-  },
-} as const;
+type Variant = "primary" | "secondary" | "light" | "destructive" | "burn";
+type Size = "sm" | "default" | "icon";
+
+const VARIANTS: Record<Variant, string> = {
+  primary: "bg-primary-blue text-paper-main hover:bg-blue-2",
+  secondary: "bg-[#B9D5FF] text-primary-blue hover:bg-[#99C2FF]",
+  light: "bg-paper-main text-surface-ink border-surface-ink! hover:bg-paper-2",
+  destructive: "bg-system-red text-paper-main hover:bg-[#BF0A00]",
+  burn: "bg-red-0 text-red-main hover:bg-red-1",
+};
+
+type Style = {
+  variant?: Variant;
+  size?: Size;
+  fullWidth?: boolean;
+  leftIcon?: ReactNode;
+  rightIcon?: ReactNode;
+};
 
 /**
- * Bread's lifted button, built on the `lifted-button-*` classes from
- * `@breadcoop/ui/theme`. The kit's own React component is not imported: its
- * entry point also loads the Privy and wagmi components.
+ * Bread's Stacks button: flat colour with a hard grey shadow that presses in.
+ * Ported from `bread-ui-kit/src/components/buttons/button.tsx` (app="stacks");
+ * the kit's own component isn't imported because its entry point loads Privy.
  */
+const buttonClasses = ({
+  variant = "primary",
+  size = "default",
+  fullWidth,
+}: Style) =>
+  cn(
+    "inline-flex cursor-pointer items-center justify-center gap-2 border border-transparent font-bold transition-all duration-200",
+    "disabled:cursor-not-allowed disabled:bg-surface-grey disabled:text-paper-main disabled:shadow-none",
+    VARIANTS[variant],
+    size === "icon" ? "p-2.5" : size === "sm" ? "px-4 py-1" : "px-8 py-4",
+    size === "sm"
+      ? "shadow-[0.125rem_0.125rem_0_0_#595959] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none"
+      : "shadow-[0.25rem_0.25rem_0_0_#595959] active:translate-x-1 active:translate-y-1 active:shadow-none",
+    fullWidth && "w-full"
+  );
+
 export function Button({
-  preset = "primary",
-  fullWidth = false,
+  variant,
+  size,
+  fullWidth,
+  leftIcon,
+  rightIcon,
+  isLoading,
   className,
   disabled,
   type = "button",
   children,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & {
-  preset?: keyof typeof PRESETS;
-  fullWidth?: boolean;
-}) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & Style & { isLoading?: boolean }) {
   return (
-    <span
-      className={cn(
-        "group relative select-none align-middle",
-        fullWidth ? "block" : "inline-block"
-      )}
-      style={PRESETS[preset] as CSSProperties}
+    <button
+      type={type}
+      disabled={disabled || isLoading}
+      className={cn(buttonClasses({ variant, size, fullWidth }), className)}
+      {...rest}
     >
-      {!disabled && (
-        <span
-          aria-hidden
-          className="lifted-button-shadow translate-x-0.5 translate-y-0.5"
-        />
-      )}
-      <button
-        type={type}
-        disabled={disabled}
-        className={cn(
-          "lifted-button-base",
-          fullWidth && "w-full",
-          disabled
-            ? "lifted-button-disabled"
-            : "lifted-button lifted-button-motion lifted-button-lifted lifted-button-active",
-          className
-        )}
-        {...rest}
-      >
-        <span className="mt-1 whitespace-nowrap p-[5px] leading-none">
-          {children}
-        </span>
-      </button>
-    </span>
+      {isLoading ? <Spinner /> : leftIcon}
+      {children}
+      {!isLoading && rightIcon}
+    </button>
+  );
+}
+
+/** Same look as `Button`, for navigation. */
+export function ButtonLink({
+  variant,
+  size,
+  fullWidth,
+  leftIcon,
+  rightIcon,
+  className,
+  children,
+  ...rest
+}: ComponentProps<typeof Link> & Style) {
+  return (
+    <Link
+      className={cn(buttonClasses({ variant, size, fullWidth }), className)}
+      {...rest}
+    >
+      {leftIcon}
+      {children}
+      {rightIcon}
+    </Link>
   );
 }
