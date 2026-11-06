@@ -23,6 +23,6 @@ body {
   }
 
   .field {
-    @apply w-full border border-paper-2 bg-white px-4 py-3 text-base outline-none focus:border-primary-orange;
+    @apply w-full bg-paper-1 px-4 py-3 text-base outline-none placeholder:text-surface-grey focus-visible:outline-2 focus-visible:outline-primary-blue;
   }
 }

@@ -34,9 +34,11 @@ type WalletContextValue = {
   signOut: () => Promise<void>;
   /**
    * Signs and sends calls. Consecutive calls to the same receiver share one
-   * transaction; the wallet asks for approval once.
+   * transaction; the wallet asks for approval once. Redirect wallets
+   * (MyNearWallet) leave the page and come back to `callbackUrl`, so code after
+   * `await send()` may never run there.
    */
-  send: (calls: Call[]) => Promise<unknown>;
+  send: (calls: Call[], opts?: { callbackUrl?: string }) => Promise<unknown>;
 };
 
 const WalletContext = createContext<WalletContextValue | null>(null);
@@ -76,7 +78,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }, [selector]);
 
   const send = useCallback(
-    async (calls: Call[]) => {
+    async (calls: Call[], opts?: { callbackUrl?: string }) => {
       if (!selector || !accountId) throw new Error("Connect a wallet first");
       const wallet = await selector.wallet();
       const transactions = groupByReceiver(calls).map((group) => ({
@@ -92,8 +94,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         ),
       }));
       return transactions.length === 1
-        ? wallet.signAndSendTransaction(transactions[0])
-        : wallet.signAndSendTransactions({ transactions });
+        ? wallet.signAndSendTransaction({ ...transactions[0], ...opts })
+        : wallet.signAndSendTransactions({ transactions, ...opts });
     },
     [selector, accountId]
   );
