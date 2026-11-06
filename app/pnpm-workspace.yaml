@@ -1,0 +1,11 @@
+# app/ is its own pnpm root, separate from web/.
+packages: []
+
+# @breadcoop/ui lists Privy, wagmi, RainbowKit and viem as peers. The app only
+# imports its CSS theme, so don't pull ~900 EVM wallet packages into the build.
+autoInstallPeers: false
+
+# No dependency may run install scripts. secp256k1 is a native addon; the
+# browser bundle uses its pure-JS fallback.
+allowBuilds:
+  secp256k1: false
