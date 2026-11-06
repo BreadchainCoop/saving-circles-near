@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowsClockwiseIcon,
@@ -15,6 +15,7 @@ import { useWallet } from "@/providers/wallet";
 import { circleCalls, circles } from "@/lib/near/circles";
 import { NEAR_CONFIG } from "@/lib/near/config";
 import { accountExists } from "@/lib/near/rpc";
+import { isAccountId, MAX_MEMBERS, MIN_MEMBERS } from "@/lib/near/account";
 import { parseUnits, shortAccount } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { Amount } from "@/components/ui/amount";
@@ -22,8 +23,6 @@ import { Button } from "@/components/ui/button";
 import { Callout } from "@/components/ui/callout";
 import { StatRow } from "@/components/ui/stat-row";
 
-const MIN_MEMBERS = 2; // contract MINIMUM_MEMBERS
-const MAX_MEMBERS = 25; // contract MAX_MEMBERS
 
 const SECOND_NS = BigInt(1_000_000_000);
 const INTERVALS = [
@@ -33,9 +32,6 @@ const INTERVALS = [
 ] as const;
 type IntervalId = (typeof INTERVALS)[number]["id"];
 
-// NEAR account ID rules: 2–64 chars, lowercase a–z 0–9 and - _ . separators.
-const ACCOUNT_RE = /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
-const isAccountId = (s: string) => s.length >= 2 && s.length <= 64 && ACCOUNT_RE.test(s);
 
 /** Deposit in token units, or null while the input isn't a valid positive amount. */
 function toUnits(amount: string): string | null {
@@ -51,6 +47,9 @@ export function CreateForm() {
   const { accountId, signIn, send } = useWallet();
   const router = useRouter();
   const [others, setOthers] = useState<string[]>([""]);
+  // Stable React keys for the member rows, so removing one doesn't shift focus.
+  const [rowKeys, setRowKeys] = useState<number[]>([0]);
+  const nextKey = useRef(1);
   const [amount, setAmount] = useState("");
   const [intervalId, setIntervalId] = useState<IntervalId>("week");
   const [memberErrors, setMemberErrors] = useState<Record<number, string>>({});
@@ -72,7 +71,12 @@ export function CreateForm() {
     });
   };
   const removeOther = (i: number) => {
-    setOthers((list) => (list.length === 1 ? [""] : list.filter((_, n) => n !== i)));
+    if (others.length === 1) {
+      setOthers([""]);
+    } else {
+      setOthers((list) => list.filter((_, n) => n !== i));
+      setRowKeys((keys) => keys.filter((_, n) => n !== i));
+    }
     setMemberErrors({});
   };
 
@@ -157,7 +161,7 @@ export function CreateForm() {
               <span className="ml-auto text-sm text-surface-grey">you</span>
             </li>
             {others.map((m, i) => (
-              <li key={i} className="flex flex-col gap-1">
+              <li key={rowKeys[i]} className="flex flex-col gap-1">
                 <div className="flex items-center gap-3 bg-paper-1 pl-4">
                   <span className="w-5 text-surface-grey">{i + 2}.</span>
                   <input
@@ -187,7 +191,10 @@ export function CreateForm() {
           {1 + others.length < MAX_MEMBERS && (
             <button
               type="button"
-              onClick={() => setOthers((list) => [...list, ""])}
+              onClick={() => {
+                setOthers((list) => [...list, ""]);
+                setRowKeys((keys) => [...keys, nextKey.current++]);
+              }}
               className="inline-flex w-max cursor-pointer items-center gap-2 font-bold text-primary-blue hover:text-blue-2"
             >
               <PlusIcon size={18} weight="bold" /> Add member
