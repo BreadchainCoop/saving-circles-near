@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { circles } from "@/lib/near/circles";
 import { NEAR_CONFIG } from "@/lib/near/config";
 import { formatInterval, formatUnits } from "@/lib/format";
+import { ProgressBar } from "@/components/ui/progress-bar";
 
 export function CircleCard({ circleId }: { circleId: string }) {
   const { data: circle, isLoading, error } = useQuery({
@@ -50,16 +51,7 @@ export function CircleCard({ circleId }: { circleId: string }) {
               {paid}/{rounds}
             </span>
           </div>
-          <div
-            role="progressbar"
-            aria-label="Rounds paid"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={progress}
-            className="h-3.5 w-full bg-paper-main p-0.75"
-          >
-            <div className="h-full bg-primary-blue" style={{ width: `${progress}%` }} />
-          </div>
+          <ProgressBar value={progress} label="Rounds paid" />
         </div>
         <ul className="flex flex-col gap-1 text-body-bold text-surface-grey-2">
           <li>

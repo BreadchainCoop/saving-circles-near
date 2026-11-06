@@ -1,4 +1,6 @@
 @import "@breadcoop/ui/theme";
+/* Pogaca (Bread Display / Bread Body) font files, shipped with the kit. */
+@import "@breadcoop/ui/fonts";
 
 /* Unlayered, like the theme's own `body` rule, so it wins over it. The theme
    switches to a dark background in dark mode; the Bread palette is light-only. */

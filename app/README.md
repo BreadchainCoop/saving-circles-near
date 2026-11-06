@@ -41,5 +41,6 @@ src/app/                  home, /new, /circle?id=
 | `@near-js/transactions` | Builds function-call actions for the wallet |
 | `near-api-js` | Required by the Meteor wallet module (peer dependency) |
 | `@tanstack/react-query` | Caching and refetching contract views |
-| `@breadcoop/ui` | Bread theme (CSS only) |
+| `@breadcoop/ui` | Bread theme and fonts (CSS only) |
+| `@phosphor-icons/react` | Icons, same set as the Bread apps |
 | `tailwindcss`, `clsx`, `tailwind-merge` | Styling |

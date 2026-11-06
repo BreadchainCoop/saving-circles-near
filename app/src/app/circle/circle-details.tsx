@@ -78,10 +78,13 @@ export function CircleDetails({ circleId }: { circleId: string }) {
     }
   };
 
-  const actions: { label: string; calls: Call[]; preset?: "destructive" }[] = [];
+  const actions: { label: string; calls: Call[]; variant?: "destructive" }[] = [];
   if (me.data) {
     if (isOwner && notStarted) {
-      actions.push({ label: "Start circle", calls: [circleCalls.start(c.id)] });
+      actions.push({
+        label: "Start circle",
+        calls: [circleCalls.start(c.id, c.members.length)],
+      });
     }
     if (c.active && !depositedThisRound) {
       actions.push({
@@ -96,7 +99,7 @@ export function CircleDetails({ circleId }: { circleId: string }) {
       actions.push({
         label: "Decommission",
         calls: [circleCalls.decommission(c.id)],
-        preset: "destructive",
+        variant: "destructive",
       });
     }
     if (BigInt(me.data.refund_owed) > BigInt(0)) {
@@ -179,7 +182,7 @@ export function CircleDetails({ circleId }: { circleId: string }) {
           {actions.map((a) => (
             <Button
               key={a.label}
-              preset={a.preset}
+              variant={a.variant}
               disabled={!!pending}
               onClick={() => run(a.label, a.calls)}
             >
@@ -205,7 +208,7 @@ export function CircleDetails({ circleId }: { circleId: string }) {
             onChange={(e) => setNewMembers(e.target.value)}
             placeholder="alice.testnet, bob.testnet"
           />
-          <Button preset="secondary" onClick={addMembers} disabled={!!pending}>
+          <Button variant="secondary" onClick={addMembers} disabled={!!pending}>
             {pending === "Add members" ? "Waiting for wallet…" : "Add members"}
           </Button>
         </section>

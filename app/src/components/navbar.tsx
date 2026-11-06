@@ -18,7 +18,7 @@ export function Navbar() {
           New circle
         </Link>
         {accountId ? (
-          <Button preset="stroke" onClick={signOut} title="Sign out">
+          <Button variant="light" onClick={signOut} title="Sign out">
             {shortAccount(accountId)}
           </Button>
         ) : (

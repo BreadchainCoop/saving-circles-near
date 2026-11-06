@@ -42,7 +42,7 @@ export function Faucet() {
       <p className="text-body-bold m-0">
         Balance: {balance ? formatUnits(balance, decimals) : "…"} {symbol}
       </p>
-      <Button preset="secondary" onClick={mint} disabled={pending}>
+      <Button variant="secondary" onClick={mint} disabled={pending}>
         {pending ? "Minting…" : `Get ${FAUCET_AMOUNT} test ${symbol}`}
       </Button>
     </div>
