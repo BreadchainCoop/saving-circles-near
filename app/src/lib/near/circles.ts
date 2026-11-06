@@ -96,6 +96,10 @@ export const circleCalls = {
       { depositYocto: storageFor(members.length) }
     ),
 
+  /** Owner removes a member, or a member leaves. Before start only. */
+  removeMember: (circleId: string, member: string) =>
+    call("remove_member", { ...id(circleId), member }),
+
   start: (circleId: string, memberCount: number) =>
     call("start", id(circleId), { depositYocto: startStorage(memberCount) }),
 
