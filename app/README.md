@@ -39,6 +39,7 @@ src/app/                  home, /new, /circle?id=
 | `next`, `react`, `react-dom` | App framework, static export |
 | `@near-wallet-selector/core`, `modal-ui`, `my-near-wallet`, `meteor-wallet`, `here-wallet` | Wallet sign-in and transaction signing |
 | `@near-js/transactions` | Builds function-call actions for the wallet |
+| `near-api-js` | Required by the Meteor wallet module (peer dependency) |
 | `@tanstack/react-query` | Caching and refetching contract views |
 | `@breadcoop/ui` | Bread theme (CSS only) |
 | `tailwindcss`, `clsx`, `tailwind-merge` | Styling |
