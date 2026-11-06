@@ -1,0 +1,26 @@
+@import "@breadcoop/ui/theme";
+
+/* Unlayered, like the theme's own `body` rule, so it wins over it. The theme
+   switches to a dark background in dark mode; the Bread palette is light-only. */
+body {
+  background: var(--color-paper-main);
+  color: var(--color-text-standard);
+  font-family: var(--font-breadBody);
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer base {
+  .page-layout {
+    @apply mx-auto w-full max-w-299 px-4 md:px-6 lg:px-8;
+  }
+}
+
+@layer components {
+  .card {
+    @apply flex min-w-0 flex-col gap-6 border border-paper-1 bg-paper-0 p-6 shadow-[0px_4px_12px_0px_#1B201A26];
+  }
+
+  .field {
+    @apply w-full border border-paper-2 bg-white px-4 py-3 text-base outline-none focus:border-primary-orange;
+  }
+}

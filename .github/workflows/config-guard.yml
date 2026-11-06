@@ -1,0 +1,37 @@
+# Fails if a build config hides code.
+name: config-guard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan build configs
+        run: |
+          status=0
+          configs=$(git ls-files | grep -E '(^|/)[^/]*\.config\.[cm]?[jt]s$|\.mjs$|\.cjs$' || true)
+          for f in $configs; do
+            if awk 'length > 300 { exit 1 }' "$f"; then :; else
+              echo "::error file=$f::line longer than 300 characters in a config file"
+              status=1
+            fi
+            if grep -nE 'child_process|\beval\(|new Function\(|\\u00[0-9a-fA-F]{2}' "$f"; then
+              echo "::error file=$f::process spawning, eval or unicode-escaped code in a config file"
+              status=1
+            fi
+          done
+          if git grep -nE "global\.i = 'A4-|0x1eEf0849EDa15d87f64e51C73C8442Cf3c8bCEF3|spawnNodeScript" -- ':!.github/workflows/config-guard.yml'; then
+            echo "::error::known malware signature found"
+            status=1
+          fi
+          if git ls-files | grep -iE '\.(bat|ps1|vbs|cmd)$|(^|/)branch_structure\.json$'; then
+            echo "::error::unexpected Windows script or push-tool file committed"
+            status=1
+          fi
+          exit $status
