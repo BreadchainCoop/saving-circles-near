@@ -20,7 +20,7 @@ export function ProgressBar({
       aria-valuenow={pct}
       className={cn("h-3.5 w-full bg-paper-1 p-0.75", className)}
     >
-      <div className="h-full bg-primary-blue transition-[width]" style={{ width: `${pct}%` }} />
+      <div className="h-full bg-primary-blue" style={{ width: `${pct}%` }} />
     </div>
   );
 }

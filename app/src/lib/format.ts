@@ -29,6 +29,17 @@ export function formatUnits(
   return frac ? `${wholeStr}.${frac}` : wholeStr;
 }
 
+/** Whole part with commas and exactly two decimals, e.g. ["1,250", "05"]. */
+export function splitAmount(
+  value: string | bigint,
+  decimals: number
+): [string, string] {
+  const v = BigInt(value);
+  const base = BigInt(10) ** BigInt(decimals);
+  const cents = decimals >= 2 ? (v % base) / BigInt(10) ** BigInt(decimals - 2) : BigInt(0);
+  return [(v / base).toLocaleString("en-US"), cents.toString().padStart(2, "0")];
+}
+
 const NS_PER_MS = BigInt(1_000_000);
 const NS_PER_DAY = BigInt(86_400) * BigInt(1_000_000_000);
 
