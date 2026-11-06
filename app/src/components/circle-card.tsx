@@ -1,66 +1,74 @@
 "use client";
 
-import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
+import { CoinsIcon, UsersThreeIcon } from "@phosphor-icons/react";
 import { circles } from "@/lib/near/circles";
-import { NEAR_CONFIG } from "@/lib/near/config";
-import { formatInterval, formatUnits } from "@/lib/format";
+import type { CircleState, CircleView } from "@/lib/near/types";
+import { formatInterval } from "@/lib/format";
+import { Amount } from "@/components/ui/amount";
+import { ButtonLink } from "@/components/ui/button";
+import { Chip } from "@/components/ui/chip";
 import { ProgressBar } from "@/components/ui/progress-bar";
 
-export function CircleCard({ circleId }: { circleId: string }) {
-  const { data: circle, isLoading, error } = useQuery({
-    queryKey: ["circle", circleId],
-    queryFn: () => circles.get(circleId),
-  });
+const STATE_CHIP: Record<CircleState, { label: string; tone: "neutral" | "blue" | "green" | "red" }> = {
+  NotStarted: { label: "Not started", tone: "neutral" },
+  Active: { label: "Active", tone: "blue" },
+  DepositInProgress: { label: "Active", tone: "blue" },
+  DepositComplete: { label: "Active", tone: "blue" },
+  MissedDeposit: { label: "Deposit missed", tone: "red" },
+  Expired: { label: "Finished", tone: "neutral" },
+  Decommissioned: { label: "Ended early", tone: "red" },
+};
+
+/** Compact card for a circle in a list, after web/'s StackCard. */
+export function CircleCard({ circle }: { circle: CircleView }) {
   const { data: state } = useQuery({
-    queryKey: ["circle-state", circleId],
-    queryFn: () => circles.state(circleId),
+    queryKey: ["circle-state", circle.id],
+    queryFn: () => circles.state(circle.id),
   });
   const { data: memberViews } = useQuery({
-    queryKey: ["member-views", circleId, circle?.members],
-    queryFn: () => circles.memberViews(circleId, circle!.members),
-    enabled: !!circle,
+    queryKey: ["member-views", circle.id, circle.members],
+    queryFn: () => circles.memberViews(circle.id, circle.members),
   });
 
-  if (isLoading) return <li className="card animate-pulse h-48" />;
-  if (error || !circle) {
-    return <li className="card text-system-red">Circle {circleId} not found</li>;
-  }
-
-  const rounds = circle.members.length;
+  const n = circle.members.length;
   // Payouts can be claimed late, so count claims rather than using the round.
   const paid = memberViews?.filter((m) => m.has_claimed).length ?? 0;
-  const progress = rounds ? Math.round((paid / rounds) * 100) : 0;
-  const { decimals, symbol } = NEAR_CONFIG.token;
+  const chip = state ? STATE_CHIP[state] : undefined;
 
   return (
-    <li className="card">
-      <Link href={`/circle/?id=${circle.id}`} className="flex flex-col gap-6">
+    <li className="card h-full">
+      <div className="flex flex-col gap-2">
+        <h3 className="m-0 text-2xl font-bold">Circle {circle.id}</h3>
         <div className="flex items-center justify-between gap-2">
-          <h3 className="text-h4 m-0">Circle #{circle.id}</h3>
-          {state && (
-            <span className="border border-current px-2 py-0.5 text-caption">
-              {state}
-            </span>
-          )}
+          <span className="font-bold text-surface-grey">ID: {circle.id}</span>
+          {chip && <Chip tone={chip.tone}>{chip.label}</Chip>}
         </div>
-        <div>
-          <div className="mb-2 flex justify-between text-body-bold">
-            <span>Rounds paid</span>
-            <span>
-              {paid}/{rounds}
-            </span>
-          </div>
-          <ProgressBar value={progress} label="Rounds paid" />
+      </div>
+      <div className="flex flex-col gap-2">
+        <div className="flex justify-between font-bold">
+          <span>Rounds paid</span>
+          <span>
+            {paid}/{n}
+          </span>
         </div>
-        <ul className="flex flex-col gap-1 text-body-bold text-surface-grey-2">
-          <li>
-            Deposit: {formatUnits(circle.deposit_amount, decimals)} {symbol}
-          </li>
-          <li>Every: {formatInterval(circle.deposit_interval)}</li>
-          <li>Members: {rounds}</li>
-        </ul>
-      </Link>
+        <ProgressBar value={n ? (paid / n) * 100 : 0} label="Rounds paid" />
+      </div>
+      <ul className="m-0 flex list-none flex-col gap-2.5 p-0 font-bold text-surface-grey-2">
+        <li className="flex items-center gap-2">
+          <UsersThreeIcon size={22} className="shrink-0 text-primary-blue" aria-hidden />
+          {n} member{n === 1 ? "" : "s"}
+        </li>
+        <li className="flex items-center gap-2">
+          <CoinsIcon size={22} className="shrink-0 text-primary-blue" aria-hidden />
+          <span>
+            Deposit: <Amount value={circle.deposit_amount} /> every {formatInterval(circle.deposit_interval)}
+          </span>
+        </li>
+      </ul>
+      <ButtonLink href={`/circle/?id=${circle.id}`} variant="secondary" className="mt-auto">
+        View details
+      </ButtonLink>
     </li>
   );
 }

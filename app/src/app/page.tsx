@@ -1,57 +1,55 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import Link from "next/link";
 import { useWallet } from "@/providers/wallet";
-import { circles } from "@/lib/near/circles";
-import { CircleCard } from "@/components/circle-card";
-import { Faucet } from "@/components/faucet";
-
-/** Seeded on testnet by scripts/seed-demo.sh. */
-const DEMO_CIRCLE_ID = "0";
+import { useAllCircles, useMyCircles } from "@/hooks/use-circles";
+import { CircleList } from "@/components/circle-list";
+import { HeroBanner } from "@/components/hero-banner";
+import { Button } from "@/components/ui/button";
 
 export default function Home() {
   const { accountId } = useWallet();
-  const { data: mine } = useQuery({
-    queryKey: ["member-circles", accountId],
-    queryFn: () => circles.ofMember(accountId!),
-    enabled: !!accountId,
-  });
+  const mine = useMyCircles();
+  const all = useAllCircles();
+  const allCircles = all.data?.pages.flatMap((p) => p.circles);
 
   return (
-    <div className="flex flex-col gap-10">
-      <section className="flex flex-col gap-4">
-        <h1 className="text-h2 m-0 text-primary-orange">Save together</h1>
-        <p className="text-h5 m-0 max-w-2xl">
-          A group agrees on a deposit and a schedule. Each round everyone
-          deposits and one member takes the pot, until everyone has been paid.
-        </p>
-      </section>
-
-      <Faucet />
+    <div className="flex flex-col gap-12">
+      <HeroBanner />
 
       {accountId && (
-        <section className="flex flex-col gap-4">
-          <h2 className="text-h4 m-0">Your circles</h2>
-          {mine?.length ? (
-            <ul className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-              {mine.map((id) => (
-                <CircleCard key={id} circleId={id} />
-              ))}
-            </ul>
-          ) : (
-            <p className="m-0 text-surface-grey-2">
-              You are not in a circle yet.
-            </p>
-          )}
-        </section>
+        <CircleList
+          title="Your circles"
+          circles={mine.data}
+          isLoading={mine.isLoading}
+          empty={
+            <>
+              You&apos;re not in a circle yet.{" "}
+              <Link href="/new/" className="font-bold text-primary-blue underline">
+                Start one
+              </Link>{" "}
+              or ask a friend to add your account.
+            </>
+          }
+        />
       )}
 
-      <section className="flex flex-col gap-4">
-        <h2 className="text-h4 m-0">Demo circle</h2>
-        <ul className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-          <CircleCard circleId={DEMO_CIRCLE_ID} />
-        </ul>
-      </section>
+      <CircleList
+        title="All circles"
+        description="Peek into every circle on NEAR testnet, newest first."
+        circles={allCircles}
+        isLoading={all.isLoading}
+        empty="No circles yet."
+        footer={
+          all.hasNextPage && (
+            <div>
+              <Button variant="light" onClick={() => all.fetchNextPage()} isLoading={all.isFetchingNextPage}>
+                Show older circles
+              </Button>
+            </div>
+          )
+        }
+      />
     </div>
   );
 }
