@@ -11,10 +11,10 @@ import { AccountDetails } from "./account-details";
 import { AccountMenu } from "./account-menu";
 import { FaucetButton } from "./faucet-button";
 
-// "My Account" joins these when the /account page lands (ui-plan.md, section 4).
 const LINKS = [
   { href: "/", label: "Dashboard" },
   { href: "/new/", label: "Start a circle" },
+  { href: "/account/", label: "My Account" },
 ];
 
 /** next.config has trailingSlash, so "/new" and "/new/" are the same page. */
