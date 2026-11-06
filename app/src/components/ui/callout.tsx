@@ -11,8 +11,8 @@ const TONES: Record<Tone, { box: string; title: string; Icon: typeof WarningIcon
     Icon: WarningIcon,
   },
   info: {
-    box: "bg-blue-0 border-primary-blue",
-    title: "text-primary-blue",
+    box: "bg-paper-1 border-surface-grey",
+    title: "text-surface-ink",
     Icon: InfoIcon,
   },
 };
