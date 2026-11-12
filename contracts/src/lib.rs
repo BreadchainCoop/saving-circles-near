@@ -1,6 +1,7 @@
 //! Rotating savings circles (ROSCAs) for NEP-141 tokens.
 //!
-//! Ported from `reference/evm/src/contracts/SavingCircles.sol`. Panic messages use the
+//! Ported from `reference/evm/src/contracts/SavingCircles.sol`, with the automation of
+//! `AutomaticSavingCircles.sol` built in (see `process_due`). Panic messages use the
 //! Solidity error names so both implementations can be read side by side.
 
 use near_contract_standards::fungible_token::core::ext_ft_core;
@@ -30,6 +31,16 @@ enum StorageKey {
     Circles,
     AllowedTokens,
     MemberCircles,
+    Automation,
+}
+
+/// A member's automation settings for one circle, keyed by `(circle id, member)`.
+#[near(serializers = [borsh])]
+pub struct Automation {
+    deposits: bool,
+    claims: bool,
+    /// Pre-funded tokens that `process_due` draws deposits from.
+    balance: u128,
 }
 
 #[near(serializers = [borsh])]
@@ -136,6 +147,34 @@ impl Circle {
         }
         let check = (current - 1).min(self.members.len() as u64 - 1);
         now >= self.round_end(check) && !self.all_deposited(check)
+    }
+
+    /// The round open for deposits, or the error a deposit would fail with.
+    fn open_round(&self, now: u64) -> Result<u64, &'static str> {
+        if !self.active {
+            return Err("NotActive");
+        }
+        if self.decommissioned {
+            return Err("NotCommissioned");
+        }
+        let round = self.current_round(now);
+        if round >= self.members.len() as u64 {
+            return Err("CircleExpired");
+        }
+        if round > 0 && now >= self.round_end(round - 1) && !self.all_deposited(round - 1) {
+            return Err("CircleTimedOut");
+        }
+        Ok(round)
+    }
+
+    /// Adds to a member's deposit for `round`, which `open_round` returned.
+    fn record_deposit(&mut self, index: usize, round: u64, amount: u128) {
+        let deposit_amount = self.deposit_amount;
+        let m = &mut self.members[index];
+        let total = m.deposits[round as usize] + amount;
+        require!(total <= deposit_amount, "ExceedsDepositAmount");
+        m.deposits[round as usize] = total;
+        m.last_deposit_round = round;
     }
 
     fn active_claimable(&self, index: usize, now: u64) -> bool {
@@ -271,6 +310,28 @@ pub struct DepositMsg {
     pub circle_id: U64,
     /// Deposit on behalf of another member. Defaults to the sender.
     pub member: Option<AccountId>,
+    /// Add to the member's pre-funded balance for automatic deposits instead of
+    /// depositing into the current round. The member must have called `set_automation`.
+    pub prefund: Option<bool>,
+}
+
+#[near(serializers = [json])]
+pub struct AutomationView {
+    pub deposits: bool,
+    pub claims: bool,
+    pub balance: U128,
+}
+
+/// What `process_due` does, or would do now.
+#[near(serializers = [json])]
+#[derive(Debug, Default, PartialEq)]
+pub struct Due {
+    /// Members whose current-round deposit is made from their pre-funded balance.
+    pub deposits: Vec<AccountId>,
+    /// Members with automatic deposits on whose balance doesn't cover the deposit.
+    pub underfunded: Vec<AccountId>,
+    /// Members with automatic claims on who are paid out.
+    pub claims: Vec<AccountId>,
 }
 
 #[near(event_json(standard = "saving_circles"))]
@@ -317,11 +378,48 @@ pub enum Event {
     },
     #[event_version("1.0.0")]
     TokenAllowed { token: AccountId, allowed: bool },
+    #[event_version("1.0.0")]
+    AutomationSet {
+        id: U64,
+        member: AccountId,
+        deposits: bool,
+        claims: bool,
+    },
+    #[event_version("1.0.0")]
+    Prefunded {
+        id: U64,
+        member: AccountId,
+        amount: U128,
+    },
+    #[event_version("1.0.0")]
+    PrefundWithdrawn {
+        id: U64,
+        member: AccountId,
+        amount: U128,
+    },
+    #[event_version("1.0.0")]
+    AutomatedDepositFailed {
+        id: U64,
+        member: AccountId,
+        needed: U128,
+        balance: U128,
+    },
 }
 
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct SavingCircles {
+    owner_id: AccountId,
+    next_id: u64,
+    circles: LookupMap<u64, Circle>,
+    allowed_tokens: IterableSet<AccountId>,
+    member_circles: LookupMap<AccountId, Vec<u64>>,
+    automation: LookupMap<(u64, AccountId), Automation>,
+}
+
+/// State layout before automation, read by `migrate`.
+#[near(serializers = [borsh])]
+struct SavingCirclesV1 {
     owner_id: AccountId,
     next_id: u64,
     circles: LookupMap<u64, Circle>,
@@ -339,6 +437,28 @@ impl SavingCircles {
             circles: LookupMap::new(StorageKey::Circles),
             allowed_tokens: IterableSet::new(StorageKey::AllowedTokens),
             member_circles: LookupMap::new(StorageKey::MemberCircles),
+            automation: LookupMap::new(StorageKey::Automation),
+        }
+    }
+
+    /// Call when redeploying over existing state. Upgrades state from before automation and
+    /// returns current state unchanged, so it is safe on every redeploy.
+    #[private]
+    #[init(ignore_state)]
+    pub fn migrate() -> Self {
+        let state = env::storage_read(b"STATE").unwrap_or_else(|| env::panic_str("NoState"));
+        if let Ok(current) = near_sdk::borsh::from_slice::<Self>(&state) {
+            return current;
+        }
+        let old: SavingCirclesV1 =
+            near_sdk::borsh::from_slice(&state).unwrap_or_else(|_| env::panic_str("UnknownState"));
+        Self {
+            owner_id: old.owner_id,
+            next_id: old.next_id,
+            circles: old.circles,
+            allowed_tokens: old.allowed_tokens,
+            member_circles: old.member_circles,
+            automation: LookupMap::new(StorageKey::Automation),
         }
     }
 
@@ -569,6 +689,121 @@ impl SavingCircles {
         )
     }
 
+    // ----------------------------------------------------------- automation
+
+    /// Members only. Turns automatic deposits and claims on or off for the caller. The
+    /// first call stores the member's settings: attach 0.01 NEAR, the unused part is
+    /// refunded. Turning automation off keeps the pre-funded balance; `withdraw_prefund`
+    /// returns it.
+    #[payable]
+    pub fn set_automation(&mut self, circle_id: U64, deposits: bool, claims: bool) {
+        let initial_storage = env::storage_usage();
+        let id = circle_id.0;
+        let caller = env::predecessor_account_id();
+        let circle = self.circle(id);
+        require!(!circle.decommissioned, "NotCommissioned");
+        require!(circle.is_member(&caller), "NotMember");
+
+        let key = (id, caller.clone());
+        match self.automation.get_mut(&key) {
+            Some(settings) => {
+                settings.deposits = deposits;
+                settings.claims = claims;
+            }
+            None => {
+                self.automation.insert(
+                    key,
+                    Automation {
+                        deposits,
+                        claims,
+                        balance: 0,
+                    },
+                );
+            }
+        }
+
+        Event::AutomationSet {
+            id: circle_id,
+            member: caller,
+            deposits,
+            claims,
+        }
+        .emit();
+        self.charge_storage(initial_storage);
+    }
+
+    /// Returns the caller's pre-funded balance, all of it by default. Works in any circle
+    /// state, including after decommissioning or removal from the circle.
+    pub fn withdraw_prefund(&mut self, circle_id: U64, amount: Option<U128>) -> Promise {
+        let member = env::predecessor_account_id();
+        let token = self.circle(circle_id.0).token.clone();
+        let settings = self
+            .automation
+            .get_mut(&(circle_id.0, member.clone()))
+            .unwrap_or_else(|| env::panic_str("NothingToWithdraw"));
+        let amount = amount.map_or(settings.balance, |a| a.0);
+        require!(amount > 0, "NothingToWithdraw");
+        require!(amount <= settings.balance, "InsufficientBalance");
+        settings.balance -= amount;
+
+        ft_transfer(token, member.clone(), amount).then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(GAS_FOR_CALLBACK)
+                .on_prefund_withdrawn(circle_id, member, U128(amount)),
+        )
+    }
+
+    /// Anyone can call this, for example a keeper once per round. Makes the current round's
+    /// deposit from the pre-funded balance of every member with automatic deposits on, then
+    /// pays out every member with automatic claims on whose round has ended and is fully
+    /// deposited. A member whose balance falls short is skipped with an
+    /// `AutomatedDepositFailed` event and the others still go through. Attach about 25 TGas
+    /// per payout on top of the base call.
+    pub fn process_due(&mut self, circle_id: U64) -> Due {
+        let id = circle_id.0;
+        let now = env::block_timestamp();
+        let due = self.due(id, now);
+
+        let circle = self
+            .circles
+            .get_mut(&id)
+            .unwrap_or_else(|| env::panic_str("NotCommissioned"));
+        // `due` lists deposits only for members of a circle with an open round.
+        let round = circle.current_round(now);
+        for member in &due.deposits {
+            let index = circle.index_of(member).unwrap();
+            let needed = circle.deposit_amount - circle.members[index].deposited(round);
+            let settings = self.automation.get_mut(&(id, member.clone())).unwrap();
+            settings.balance -= needed;
+            circle.record_deposit(index, round, needed);
+            Event::FundsDeposited {
+                id: circle_id,
+                member: member.clone(),
+                amount: U128(needed),
+            }
+            .emit();
+        }
+        for member in &due.underfunded {
+            let index = circle.index_of(member).unwrap();
+            let needed = circle.deposit_amount - circle.members[index].deposited(round);
+            let balance = self
+                .automation
+                .get(&(id, member.clone()))
+                .map_or(0, |s| s.balance);
+            Event::AutomatedDepositFailed {
+                id: circle_id,
+                member: member.clone(),
+                needed: U128(needed),
+                balance: U128(balance),
+            }
+            .emit();
+        }
+        for member in &due.claims {
+            self.internal_withdraw(id, member.clone()).detach();
+        }
+        due
+    }
+
     // ------------------------------------------------------------ callbacks
 
     #[private]
@@ -620,6 +855,22 @@ impl SavingCircles {
         let circle = self.circle_mut(circle_id.0);
         if let Some(index) = circle.index_of(&member) {
             circle.members[index].refund_owed += amount.0;
+        }
+    }
+
+    #[private]
+    pub fn on_prefund_withdrawn(&mut self, circle_id: U64, member: AccountId, amount: U128) {
+        if promise_succeeded() {
+            Event::PrefundWithdrawn {
+                id: circle_id,
+                member,
+                amount,
+            }
+            .emit();
+            return;
+        }
+        if let Some(settings) = self.automation.get_mut(&(circle_id.0, member)) {
+            settings.balance += amount.0;
         }
     }
 
@@ -764,6 +1015,21 @@ impl SavingCircles {
     pub fn round_state(&self, circle_id: U64) -> RoundState {
         self.circle(circle_id.0).round_state(env::block_timestamp())
     }
+
+    pub fn get_automation(&self, circle_id: U64, member: AccountId) -> Option<AutomationView> {
+        self.automation
+            .get(&(circle_id.0, member))
+            .map(|s| AutomationView {
+                deposits: s.deposits,
+                claims: s.claims,
+                balance: U128(s.balance),
+            })
+    }
+
+    /// What `process_due` would do now. A keeper calls it only when this is non-empty.
+    pub fn get_due(&self, circle_id: U64) -> Due {
+        self.due(circle_id.0, env::block_timestamp())
+    }
 }
 
 #[near]
@@ -777,10 +1043,17 @@ impl FungibleTokenReceiver for SavingCircles {
         msg: String,
     ) -> PromiseOrValue<U128> {
         let token = env::predecessor_account_id();
-        let DepositMsg { circle_id, member } =
-            serde_json::from_str(&msg).unwrap_or_else(|_| env::panic_str("InvalidDepositMsg"));
+        let DepositMsg {
+            circle_id,
+            member,
+            prefund,
+        } = serde_json::from_str(&msg).unwrap_or_else(|_| env::panic_str("InvalidDepositMsg"));
         let member = member.unwrap_or(sender_id);
-        self.internal_deposit(circle_id.0, member, token, amount.0);
+        if prefund.unwrap_or(false) {
+            self.internal_prefund(circle_id.0, member, token, amount.0);
+        } else {
+            self.internal_deposit(circle_id.0, member, token, amount.0);
+        }
         PromiseOrValue::Value(U128(0))
     }
 }
@@ -820,21 +1093,11 @@ impl SavingCircles {
             .index_of(&member)
             .unwrap_or_else(|| env::panic_str("NotMember"));
 
-        let round = circle.current_round(now);
-        require!(round < circle.members.len() as u64, "CircleExpired");
-        if round > 0 {
-            require!(
-                now < circle.round_end(round - 1) || circle.all_deposited(round - 1),
-                "CircleTimedOut"
-            );
-        }
-
-        let deposit_amount = circle.deposit_amount;
-        let m = &mut circle.members[index];
-        let total = m.deposits[round as usize] + amount;
-        require!(total <= deposit_amount, "ExceedsDepositAmount");
-        m.deposits[round as usize] = total;
-        m.last_deposit_round = round;
+        let round = match circle.open_round(now) {
+            Ok(round) => round,
+            Err(e) => env::panic_str(e),
+        };
+        circle.record_deposit(index, round, amount);
 
         Event::FundsDeposited {
             id: U64(id),
@@ -842,6 +1105,62 @@ impl SavingCircles {
             amount: U128(amount),
         }
         .emit();
+    }
+
+    /// Adds to a member's pre-funded balance. Allowed before the circle starts.
+    fn internal_prefund(&mut self, id: u64, member: AccountId, token: AccountId, amount: u128) {
+        let circle = self.circle(id);
+        require!(!circle.decommissioned, "NotCommissioned");
+        require!(token == circle.token, "TokenNotAllowed");
+        require!(circle.is_member(&member), "NotMember");
+        // Settings are created, and their storage paid, by `set_automation`.
+        let settings = self
+            .automation
+            .get_mut(&(id, member.clone()))
+            .unwrap_or_else(|| env::panic_str("AutomationNotSet"));
+        settings.balance = settings
+            .balance
+            .checked_add(amount)
+            .unwrap_or_else(|| env::panic_str("BalanceOverflow"));
+
+        Event::Prefunded {
+            id: U64(id),
+            member,
+            amount: U128(amount),
+        }
+        .emit();
+    }
+
+    fn due(&self, id: u64, now: u64) -> Due {
+        let circle = self.circle(id);
+        let settings = |m: &Member| self.automation.get(&(id, m.account_id.clone()));
+        let mut due = Due::default();
+
+        if let Ok(round) = circle.open_round(now) {
+            for m in &circle.members {
+                let needed = circle.deposit_amount - m.deposited(round);
+                if let Some(s) = settings(m).filter(|s| s.deposits && needed > 0) {
+                    if s.balance >= needed {
+                        due.deposits.push(m.account_id.clone());
+                    } else {
+                        due.underfunded.push(m.account_id.clone());
+                    }
+                }
+            }
+        }
+
+        // As in the Solidity contract, automatic claims wait for the member's round to end.
+        if circle.active && !circle.is_decommissionable(now) {
+            for (index, m) in circle.members.iter().enumerate() {
+                if settings(m).is_some_and(|s| s.claims)
+                    && now >= circle.round_end(index as u64)
+                    && circle.active_claimable(index, now)
+                {
+                    due.claims.push(m.account_id.clone());
+                }
+            }
+        }
+        due
     }
 
     fn internal_withdraw(&mut self, id: u64, member: AccountId) -> Promise {
@@ -890,6 +1209,7 @@ impl SavingCircles {
         // `store` collections buffer writes; flush so storage_usage reflects them.
         self.circles.flush();
         self.member_circles.flush();
+        self.automation.flush();
         let used = env::storage_usage().saturating_sub(initial);
         let cost = env::storage_byte_cost().saturating_mul(used as u128);
         let attached = env::attached_deposit();

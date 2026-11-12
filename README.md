@@ -80,7 +80,9 @@ near contract call-function as-read-only circles.bread-saving-circles.testnet ge
 ### Build, test and deploy it yourself
 
 Requires Rust, [cargo-near](https://github.com/near/cargo-near) and
-[near-cli-rs](https://github.com/near/near-cli-rs).
+[near-cli-rs](https://github.com/near/near-cli-rs). The deploy script also needs Docker: it
+builds the contract reproducibly so it can be verified on NearBlocks, and it deploys only a
+pushed commit.
 
 ```sh
 cd contracts
