@@ -1,0 +1,9 @@
+# Builds only app/. Never point a Netlify site at the repo root or web/.
+[build]
+  base = "app"
+  command = "pnpm build"
+  publish = "out"
+
+[build.environment]
+  NODE_VERSION = "22"
+  PNPM_VERSION = "11.0.0"

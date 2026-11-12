@@ -40,10 +40,11 @@ not claimed as hackathon work.
 ## Repository layout
 
 ```
+app/            NEAR frontend (Next.js static export) — hackathon work
 contracts/      NEAR smart contract (Rust, near-sdk) and a test token — hackathon work
 scripts/        Testnet deploy and demo seeding — hackathon work
 deployments/    Deployed contract addresses, read by the frontend
-web/            Frontend — baseline, being moved from EVM to NEAR
+web/            Previous EVM frontend — baseline, not used by the NEAR app
 reference/evm/  Solidity original — baseline, read-only
 ```
 
