@@ -38,7 +38,17 @@ sub_account() { # name balance
   fi
 }
 
-(cd "$ROOT/contracts" && cargo near build non-reproducible-wasm \
+# Saving Circles is built reproducibly (needs Docker) so NearBlocks can verify it. The build
+# records the commit, and verification fetches it from GitHub, so it must be pushed.
+if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
+  echo "Commit, stash or remove your changes, including untracked files: the reproducible build needs a clean tree." >&2
+  exit 1
+fi
+if [ -z "$(git -C "$ROOT" branch -r --contains HEAD)" ]; then
+  echo "Push $(git -C "$ROOT" rev-parse --short HEAD) first: NearBlocks verifies from GitHub." >&2
+  exit 1
+fi
+(cd "$ROOT/contracts" && cargo near build reproducible-wasm \
   && cargo near build non-reproducible-wasm --manifest-path mock-ft/Cargo.toml)
 
 # Contract storage is staked from each account's balance: ~1.6 NEAR for the token,
@@ -51,8 +61,11 @@ initialized() { # contract view-method
     network-config "$NETWORK" now >/dev/null 2>&1
 }
 
-deploy() { # account wasm view-method init-args
-  if initialized "$1" "$3"; then
+deploy() { # account wasm view-method init-args [migrate-method]
+  if initialized "$1" "$3" && [ -n "${5:-}" ]; then
+    near_tx contract deploy "$1" use-file "$2" with-init-call "$5" json-args '{}' \
+      prepaid-gas '100.0 Tgas' attached-deposit '0 NEAR'
+  elif initialized "$1" "$3"; then
     near_tx contract deploy "$1" use-file "$2" without-init-call
   else
     near_tx contract deploy "$1" use-file "$2" with-init-call new json-args "$4" \
@@ -62,8 +75,9 @@ deploy() { # account wasm view-method init-args
 
 deploy "$TOKEN" "$ROOT/contracts/target/near/mock_ft/mock_ft.wasm" ft_metadata \
   '{"name":"Test USDC","symbol":"tUSDC","decimals":6}'
+# `migrate` upgrades existing state in place, keeping circles; it is a no-op when current.
 deploy "$CIRCLES" "$ROOT/contracts/target/near/saving_circles.wasm" owner_id \
-  "{\"owner_id\":\"$NEAR_ACCOUNT\"}"
+  "{\"owner_id\":\"$NEAR_ACCOUNT\"}" migrate
 
 call "$NEAR_ACCOUNT" "$CIRCLES" set_token_allowed "{\"token\":\"$TOKEN\",\"allowed\":true}" '0 NEAR'
 # The contract needs a token account to receive deposits.

@@ -424,3 +424,90 @@ async fn storage_must_be_paid_and_excess_is_refunded() -> anyhow::Result<()> {
     assert!(spent < NearToken::from_millinear(100), "spent {spent}");
     Ok(())
 }
+
+#[tokio::test]
+async fn keeper_processes_prefunded_deposits_and_claims() -> anyhow::Result<()> {
+    let env = Env::new().await?;
+    let alice = env.user("alice", 2 * DEPOSIT).await?;
+    let bob = env.user("bob", 2 * DEPOSIT).await?;
+    let carol = env.user("carol", 2 * DEPOSIT).await?;
+    let keeper = env.user("keeper", 0).await?;
+    let members = [&alice, &bob, &carol];
+    let id = env.started_circle(&members).await?;
+
+    let prefund = |m: &Account, amount: u128| {
+        m.call(env.ft.id(), "ft_transfer_call")
+            .args_json(json!({
+                "receiver_id": env.circles.id(),
+                "amount": amount.to_string(),
+                "msg": json!({ "circle_id": id.to_string(), "prefund": true }).to_string(),
+            }))
+            .deposit(NearToken::from_yoctonear(1))
+            .max_gas()
+            .transact()
+    };
+    let process_due = || {
+        keeper
+            .call(env.circles.id(), "process_due")
+            .args_json(json!({ "circle_id": id.to_string() }))
+            .max_gas()
+            .transact()
+    };
+
+    // Pre-funding needs automation settings first; the token returns the transfer.
+    let early: String = prefund(&alice, DEPOSIT).await?.into_result()?.json()?;
+    assert_eq!(early, "0");
+
+    for m in members {
+        m.call(env.circles.id(), "set_automation")
+            .args_json(json!({ "circle_id": id.to_string(), "deposits": true, "claims": true }))
+            .deposit(NearToken::from_millinear(10))
+            .transact()
+            .await?
+            .into_result()?;
+    }
+    // Carol pre-funds only half a deposit.
+    for (m, amount) in [
+        (&alice, 2 * DEPOSIT),
+        (&bob, 2 * DEPOSIT),
+        (&carol, DEPOSIT / 2),
+    ] {
+        let used: String = prefund(m, amount).await?.into_result()?.json()?;
+        assert_eq!(used, amount.to_string());
+    }
+
+    let first = process_due().await?;
+    assert!(first.is_success(), "{first:?}");
+    assert_eq!(events(&first, "funds_deposited").len(), 2);
+    let failed = events(&first, "automated_deposit_failed");
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0]["data"]["member"], carol.id().to_string());
+
+    let used: String = prefund(&carol, DEPOSIT * 3 / 2)
+        .await?
+        .into_result()?
+        .json()?;
+    assert_eq!(used, (DEPOSIT * 3 / 2).to_string());
+    let retry = process_due().await?;
+    assert_eq!(events(&retry, "funds_deposited").len(), 1);
+
+    // Next round: everyone's deposit comes from their balance and alice is paid round 0.
+    env.advance_to(id, INTERVAL + 1).await?;
+    let second = process_due().await?;
+    assert!(second.is_success(), "{second:?}");
+    assert_eq!(events(&second, "funds_deposited").len(), 3);
+    assert_eq!(events(&second, "funds_withdrawn").len(), 1);
+    assert_eq!(env.balance(&alice).await?, 3 * DEPOSIT);
+
+    // Both pre-funded deposits are spent, so there is nothing left to withdraw.
+    let empty = bob
+        .call(env.circles.id(), "withdraw_prefund")
+        .args_json(json!({ "circle_id": id.to_string() }))
+        .max_gas()
+        .transact()
+        .await?;
+    assert!(format!("{:?}", empty.into_result()).contains("NothingToWithdraw"));
+    // Pot of round 1 is held, nothing else.
+    assert_eq!(env.balance(env.circles.as_account()).await?, 3 * DEPOSIT);
+    Ok(())
+}

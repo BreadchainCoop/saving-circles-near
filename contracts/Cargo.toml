@@ -1,10 +1,18 @@
 [package]
 name = "saving-circles"
 description = "Rotating savings circles (ROSCAs) for NEP-141 tokens on NEAR"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/BreadchainCoop/saving-circles-near"
+
+# `cargo near build reproducible-wasm` builds in this image so NearBlocks can rebuild the
+# same wasm and verify the deployed contract. Keep cargo-near in sync with CI.
+[package.metadata.near.reproducible_build]
+image = "sourcescan/cargo-near:0.22.0-rust-1.99.1"
+image_digest = "sha256:c9655eaf7436b90c87ea8b25739f91063032c5c30ba24cfeafe72c142943b5bb"
+passed_env = []
+container_build_command = ["cargo", "near", "build", "non-reproducible-wasm", "--locked"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

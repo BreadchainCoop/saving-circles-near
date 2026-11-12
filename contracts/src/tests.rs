@@ -386,3 +386,273 @@ fn only_contract_owner_allows_tokens() {
     call_as(&accounts(0), T0);
     c.set_token_allowed("other.testnet".parse().unwrap(), true);
 }
+
+// ------------------------------------------------------------ automation
+
+fn automate(c: &mut SavingCircles, member: &AccountId, deposits: bool, claims: bool) {
+    call_as(member, T0);
+    c.set_automation(ID, deposits, claims);
+}
+
+fn prefund(c: &mut SavingCircles, member: &AccountId, now: u64, amount: u128) {
+    testing_env!(context(&token(), now, NearToken::from_yoctonear(0)).build());
+    c.ft_on_transfer(
+        member.clone(),
+        U128(amount),
+        r#"{"circle_id":"0","prefund":true}"#.to_string(),
+    );
+}
+
+fn prefunded(c: &SavingCircles, member: &AccountId) -> u128 {
+    c.get_automation(ID, member.clone()).unwrap().balance.0
+}
+
+fn deposited(c: &SavingCircles, member: &AccountId, round: usize) -> u128 {
+    c.get_member(ID, member.clone()).unwrap().deposits[round].0
+}
+
+fn process_due(c: &mut SavingCircles, now: u64) -> Due {
+    call_as(&accounts(5), now);
+    c.process_due(ID)
+}
+
+/// A started circle where every member automates deposits and claims and pre-funds
+/// `rounds` deposits.
+fn automated(n: usize, rounds: u128) -> (SavingCircles, Vec<AccountId>) {
+    let (mut c, members) = started(n);
+    for m in &members {
+        automate(&mut c, m, true, true);
+        prefund(&mut c, m, T0, rounds * AMOUNT);
+    }
+    (c, members)
+}
+
+#[test]
+fn process_due_runs_a_whole_circle() {
+    let (mut c, members) = automated(3, 3);
+
+    for round in 0..3u64 {
+        let due = process_due(&mut c, round_time(round));
+        assert_eq!(due.deposits, members);
+        assert!(due.underfunded.is_empty());
+        // The previous round's recipient is paid once their round has ended.
+        let expected: Vec<AccountId> = match round {
+            0 => vec![],
+            r => vec![members[r as usize - 1].clone()],
+        };
+        assert_eq!(due.claims, expected);
+    }
+    let last = process_due(&mut c, round_time(3));
+    assert!(last.deposits.is_empty());
+    assert_eq!(last.claims, vec![members[2].clone()]);
+
+    assert!(members.iter().all(|m| has_claimed(&c, m)));
+    assert!(members.iter().all(|m| prefunded(&c, m) == 0));
+    assert!(!c.is_active(ID));
+}
+
+#[test]
+fn underfunded_member_is_skipped_and_the_rest_still_deposit() {
+    let (mut c, members) = started(3);
+    for m in &members {
+        automate(&mut c, m, true, true);
+    }
+    prefund(&mut c, &members[0], T0, AMOUNT);
+    prefund(&mut c, &members[1], T0, AMOUNT);
+    prefund(&mut c, &members[2], T0, AMOUNT / 2);
+
+    call_as(&accounts(5), round_time(0));
+    let preview = c.get_due(ID);
+    let due = process_due(&mut c, round_time(0));
+    assert_eq!(preview, due);
+    assert_eq!(due.deposits, members[..2].to_vec());
+    assert_eq!(due.underfunded, vec![members[2].clone()]);
+
+    assert_eq!(deposited(&c, &members[0], 0), AMOUNT);
+    assert_eq!(deposited(&c, &members[1], 0), AMOUNT);
+    assert_eq!(deposited(&c, &members[2], 0), 0);
+    assert_eq!(prefunded(&c, &members[2]), AMOUNT / 2);
+
+    // Topping up within the round lets the next call catch up.
+    prefund(&mut c, &members[2], round_time(0), AMOUNT / 2);
+    let retry = process_due(&mut c, round_time(0));
+    assert_eq!(retry.deposits, vec![members[2].clone()]);
+    assert!(retry.underfunded.is_empty());
+    call_as(&accounts(5), round_time(0));
+    assert_eq!(c.round_state(ID), RoundState::Claimable);
+}
+
+#[test]
+fn automatic_deposit_tops_up_a_partial_manual_deposit() {
+    let (mut c, members) = started(2);
+    automate(&mut c, &members[1], true, false);
+    prefund(&mut c, &members[1], T0, AMOUNT);
+    deposit(&mut c, &members[1], round_time(0), AMOUNT / 4);
+
+    let due = process_due(&mut c, round_time(0));
+    assert_eq!(due.deposits, vec![members[1].clone()]);
+    assert_eq!(deposited(&c, &members[1], 0), AMOUNT);
+    assert_eq!(prefunded(&c, &members[1]), AMOUNT / 4);
+}
+
+#[test]
+fn opt_out_stops_automation_and_keeps_the_balance() {
+    let (mut c, members) = automated(2, 1);
+    automate(&mut c, &members[0], false, false);
+
+    let due = process_due(&mut c, round_time(0));
+    assert_eq!(due.deposits, vec![members[1].clone()]);
+    assert_eq!(deposited(&c, &members[0], 0), 0);
+    assert_eq!(prefunded(&c, &members[0]), AMOUNT);
+
+    // Deposits made by hand still count, but the claim waits for a manual withdraw.
+    deposit(&mut c, &members[0], round_time(0), AMOUNT);
+    let due = process_due(&mut c, round_time(1));
+    assert!(due.claims.is_empty());
+    assert!(!has_claimed(&c, &members[0]));
+}
+
+#[test]
+fn claims_wait_for_the_round_to_end() {
+    let (mut c, members) = automated(2, 2);
+    let due = process_due(&mut c, round_time(0));
+    assert!(due.claims.is_empty());
+    call_as(&accounts(5), round_time(0));
+    assert_eq!(c.round_state(ID), RoundState::Claimable);
+    assert!(!has_claimed(&c, &members[0]));
+}
+
+#[test]
+fn nothing_is_due_once_a_round_is_missed() {
+    let (mut c, members) = started(3);
+    automate(&mut c, &members[0], true, true);
+    prefund(&mut c, &members[0], T0, 3 * AMOUNT);
+    process_due(&mut c, round_time(0));
+
+    // Round 0 closed incomplete: the circle can only be decommissioned now.
+    let due = process_due(&mut c, round_time(1));
+    assert_eq!(due, Due::default());
+    assert_eq!(prefunded(&c, &members[0]), 2 * AMOUNT);
+}
+
+#[test]
+fn prefund_can_be_withdrawn_and_a_failed_transfer_restores_it() {
+    let (mut c, members) = automated(2, 2);
+
+    call_as(&members[0], round_time(0));
+    c.withdraw_prefund(ID, Some(U128(AMOUNT)));
+    assert_eq!(prefunded(&c, &members[0]), AMOUNT);
+
+    testing_env!(
+        context(&contract_id(), round_time(0), NearToken::from_yoctonear(0)).build(),
+        test_vm_config(),
+        RuntimeFeesConfig::test(),
+        Default::default(),
+        vec![PromiseResult::Failed],
+    );
+    c.on_prefund_withdrawn(ID, members[0].clone(), U128(AMOUNT));
+    assert_eq!(prefunded(&c, &members[0]), 2 * AMOUNT);
+
+    call_as(&members[0], round_time(0));
+    c.withdraw_prefund(ID, None);
+    assert_eq!(prefunded(&c, &members[0]), 0);
+}
+
+#[test]
+#[should_panic(expected = "InsufficientBalance")]
+fn withdrawing_more_than_the_prefund_fails() {
+    let (mut c, members) = automated(2, 1);
+    call_as(&members[0], round_time(0));
+    c.withdraw_prefund(ID, Some(U128(AMOUNT + 1)));
+}
+
+#[test]
+#[should_panic(expected = "AutomationNotSet")]
+fn prefund_without_automation_settings_fails() {
+    let (mut c, members) = started(2);
+    prefund(&mut c, &members[1], T0, AMOUNT);
+}
+
+#[test]
+#[should_panic(expected = "NotMember")]
+fn non_member_cannot_set_automation() {
+    let (mut c, _) = started(2);
+    automate(&mut c, &accounts(5), true, true);
+}
+
+#[test]
+fn members_can_automate_and_prefund_before_the_start() {
+    let mut c = deploy();
+    let members = vec![accounts(0), accounts(1)];
+    create(&mut c, &members);
+    automate(&mut c, &members[1], true, false);
+    prefund(&mut c, &members[1], T0, AMOUNT);
+    assert_eq!(process_due(&mut c, T0), Due::default());
+
+    call_as(&members[0], T0);
+    c.start(ID);
+    let due = process_due(&mut c, round_time(0));
+    assert_eq!(due.deposits, vec![members[1].clone()]);
+}
+
+#[test]
+fn migrate_upgrades_state_from_before_automation() {
+    call_as(&admin(), T0);
+    env::state_write(&SavingCirclesV1 {
+        owner_id: admin(),
+        next_id: 7,
+        circles: LookupMap::new(StorageKey::Circles),
+        allowed_tokens: IterableSet::new(StorageKey::AllowedTokens),
+        member_circles: LookupMap::new(StorageKey::MemberCircles),
+    });
+    // State from before versioning has no version key.
+    assert_eq!(read_state_version(), 1);
+
+    let c = SavingCircles::migrate();
+    assert_eq!(c.next_id(), U64(7));
+    assert_eq!(c.owner_id(), admin());
+    assert_eq!(read_state_version(), STATE_VERSION);
+
+    // Running it again on current state returns it unchanged.
+    env::state_write(&c);
+    assert_eq!(SavingCircles::migrate().next_id(), U64(7));
+    assert_eq!(read_state_version(), STATE_VERSION);
+}
+
+#[test]
+fn new_records_the_state_version() {
+    deploy();
+    assert_eq!(read_state_version(), STATE_VERSION);
+}
+
+#[test]
+#[should_panic(expected = "UnknownStateVersion")]
+fn migrate_rejects_an_unknown_state_version() {
+    let c = deploy();
+    env::state_write(&c);
+    env::storage_write(STATE_VERSION_KEY, &99u32.to_le_bytes());
+    SavingCircles::migrate();
+}
+
+#[test]
+fn a_claim_backlog_drains_over_several_calls() {
+    let mut c = deploy();
+    let members: Vec<AccountId> = (0..10)
+        .map(|i| format!("member{i}.testnet").parse().unwrap())
+        .collect();
+    create(&mut c, &members);
+    c.start(ID);
+    for m in &members {
+        automate(&mut c, m, false, true);
+    }
+    // Every round is deposited by hand while no keeper runs, so every claim piles up.
+    for round in 0..members.len() as u64 {
+        everyone_deposits(&mut c, &members, round);
+    }
+
+    let first = process_due(&mut c, round_time(10));
+    assert_eq!(first.claims, members[..MAX_CLAIMS_PER_CALL].to_vec());
+    let second = process_due(&mut c, round_time(10));
+    assert_eq!(second.claims, members[MAX_CLAIMS_PER_CALL..].to_vec());
+    assert!(members.iter().all(|m| has_claimed(&c, m)));
+}
