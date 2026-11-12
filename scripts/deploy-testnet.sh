@@ -41,7 +41,7 @@ sub_account() { # name balance
 # Saving Circles is built reproducibly (needs Docker) so NearBlocks can verify it. The build
 # records the commit, and verification fetches it from GitHub, so it must be pushed.
 if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
-  echo "Commit your changes first: the reproducible build needs a clean tree." >&2
+  echo "Commit, stash or remove your changes, including untracked files: the reproducible build needs a clean tree." >&2
   exit 1
 fi
 if [ -z "$(git -C "$ROOT" branch -r --contains HEAD)" ]; then

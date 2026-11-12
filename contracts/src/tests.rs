@@ -605,12 +605,54 @@ fn migrate_upgrades_state_from_before_automation() {
         allowed_tokens: IterableSet::new(StorageKey::AllowedTokens),
         member_circles: LookupMap::new(StorageKey::MemberCircles),
     });
+    // State from before versioning has no version key.
+    assert_eq!(read_state_version(), 1);
 
     let c = SavingCircles::migrate();
     assert_eq!(c.next_id(), U64(7));
     assert_eq!(c.owner_id(), admin());
+    assert_eq!(read_state_version(), STATE_VERSION);
 
     // Running it again on current state returns it unchanged.
     env::state_write(&c);
     assert_eq!(SavingCircles::migrate().next_id(), U64(7));
+    assert_eq!(read_state_version(), STATE_VERSION);
+}
+
+#[test]
+fn new_records_the_state_version() {
+    deploy();
+    assert_eq!(read_state_version(), STATE_VERSION);
+}
+
+#[test]
+#[should_panic(expected = "UnknownStateVersion")]
+fn migrate_rejects_an_unknown_state_version() {
+    let c = deploy();
+    env::state_write(&c);
+    env::storage_write(STATE_VERSION_KEY, &99u32.to_le_bytes());
+    SavingCircles::migrate();
+}
+
+#[test]
+fn a_claim_backlog_drains_over_several_calls() {
+    let mut c = deploy();
+    let members: Vec<AccountId> = (0..10)
+        .map(|i| format!("member{i}.testnet").parse().unwrap())
+        .collect();
+    create(&mut c, &members);
+    c.start(ID);
+    for m in &members {
+        automate(&mut c, m, false, true);
+    }
+    // Every round is deposited by hand while no keeper runs, so every claim piles up.
+    for round in 0..members.len() as u64 {
+        everyone_deposits(&mut c, &members, round);
+    }
+
+    let first = process_due(&mut c, round_time(10));
+    assert_eq!(first.claims, members[..MAX_CLAIMS_PER_CALL].to_vec());
+    let second = process_due(&mut c, round_time(10));
+    assert_eq!(second.claims, members[MAX_CLAIMS_PER_CALL..].to_vec());
+    assert!(members.iter().all(|m| has_claimed(&c, m)));
 }

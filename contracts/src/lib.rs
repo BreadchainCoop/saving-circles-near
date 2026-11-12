@@ -24,6 +24,28 @@ pub const MAX_MEMBERS: usize = 25;
 const GAS_FOR_FT_TRANSFER: Gas = Gas::from_tgas(10);
 const GAS_FOR_CALLBACK: Gas = Gas::from_tgas(10);
 const ONE_YOCTO: NearToken = NearToken::from_yoctonear(1);
+/// Payouts `process_due` starts per call. Each needs about 25 TGas, so 8 fit in the 300 TGas
+/// transaction limit with room for the deposits; a longer backlog drains over several calls.
+pub const MAX_CLAIMS_PER_CALL: usize = 8;
+
+/// Layout version of the contract state, stored next to it so `migrate` knows what it reads.
+/// State without this key predates versioning and has the `SavingCirclesV1` layout.
+const STATE_VERSION_KEY: &[u8] = b"STATE_VERSION";
+const STATE_VERSION: u32 = 2;
+
+fn read_state_version() -> u32 {
+    env::storage_read(STATE_VERSION_KEY).map_or(1, |bytes| {
+        u32::from_le_bytes(
+            bytes
+                .try_into()
+                .unwrap_or_else(|_| env::panic_str("InvalidStateVersion")),
+        )
+    })
+}
+
+fn write_state_version() {
+    env::storage_write(STATE_VERSION_KEY, &STATE_VERSION.to_le_bytes());
+}
 
 #[derive(BorshStorageKey)]
 #[near]
@@ -431,6 +453,7 @@ struct SavingCirclesV1 {
 impl SavingCircles {
     #[init]
     pub fn new(owner_id: AccountId) -> Self {
+        write_state_version();
         Self {
             owner_id,
             next_id: 0,
@@ -441,25 +464,30 @@ impl SavingCircles {
         }
     }
 
-    /// Call when redeploying over existing state. Upgrades state from before automation and
-    /// returns current state unchanged, so it is safe on every redeploy.
+    /// Call when redeploying over existing state. Upgrades state from any earlier layout,
+    /// chosen by the stored state version, and returns current state unchanged, so it is safe
+    /// on every redeploy. A new layout bumps `STATE_VERSION` and adds an arm here.
     #[private]
     #[init(ignore_state)]
     pub fn migrate() -> Self {
-        let state = env::storage_read(b"STATE").unwrap_or_else(|| env::panic_str("NoState"));
-        if let Ok(current) = near_sdk::borsh::from_slice::<Self>(&state) {
-            return current;
-        }
-        let old: SavingCirclesV1 =
-            near_sdk::borsh::from_slice(&state).unwrap_or_else(|_| env::panic_str("UnknownState"));
-        Self {
-            owner_id: old.owner_id,
-            next_id: old.next_id,
-            circles: old.circles,
-            allowed_tokens: old.allowed_tokens,
-            member_circles: old.member_circles,
-            automation: LookupMap::new(StorageKey::Automation),
-        }
+        let state = match read_state_version() {
+            STATE_VERSION => env::state_read().unwrap_or_else(|| env::panic_str("NoState")),
+            1 => {
+                let old: SavingCirclesV1 =
+                    env::state_read().unwrap_or_else(|| env::panic_str("NoState"));
+                Self {
+                    owner_id: old.owner_id,
+                    next_id: old.next_id,
+                    circles: old.circles,
+                    allowed_tokens: old.allowed_tokens,
+                    member_circles: old.member_circles,
+                    automation: LookupMap::new(StorageKey::Automation),
+                }
+            }
+            _ => env::panic_str("UnknownStateVersion"),
+        };
+        write_state_version();
+        state
     }
 
     // ---------------------------------------------------------------- admin
@@ -757,8 +785,9 @@ impl SavingCircles {
     /// deposit from the pre-funded balance of every member with automatic deposits on, then
     /// pays out every member with automatic claims on whose round has ended and is fully
     /// deposited. A member whose balance falls short is skipped with an
-    /// `AutomatedDepositFailed` event and the others still go through. Attach about 25 TGas
-    /// per payout on top of the base call.
+    /// `AutomatedDepositFailed` event and the others still go through. Starts at most
+    /// `MAX_CLAIMS_PER_CALL` payouts; a longer backlog drains over several calls. Attach
+    /// 300 TGas.
     pub fn process_due(&mut self, circle_id: U64) -> Due {
         let id = circle_id.0;
         let now = env::block_timestamp();
@@ -1152,7 +1181,8 @@ impl SavingCircles {
         // As in the Solidity contract, automatic claims wait for the member's round to end.
         if circle.active && !circle.is_decommissionable(now) {
             for (index, m) in circle.members.iter().enumerate() {
-                if settings(m).is_some_and(|s| s.claims)
+                if due.claims.len() < MAX_CLAIMS_PER_CALL
+                    && settings(m).is_some_and(|s| s.claims)
                     && now >= circle.round_end(index as u64)
                     && circle.active_claimable(index, now)
                 {

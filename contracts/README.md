@@ -60,11 +60,17 @@ top up and the next `process_due` in the same round catches up, or deposit by ha
 checks `get_due(circle_id)` first and calls `process_due` only when it lists something.
 Turning automation off keeps the balance; `withdraw_prefund` returns it in any circle state.
 
+Each `process_due` starts at most 8 payouts (`MAX_CLAIMS_PER_CALL`) so it fits in one
+transaction's 300 TGas; attach 300 TGas. A backlog, for example after a keeper outage on a large
+circle, drains over several calls.
+
 ### Upgrading
 
-Redeploy with `migrate` as the init call. It upgrades state written by an earlier version and
-leaves current state unchanged, so it is safe on every redeploy. `scripts/deploy-testnet.sh`
-does this.
+Redeploy with `migrate` as the init call. The contract stores its state layout version under
+the `STATE_VERSION` key, and `migrate` upgrades from whichever version it finds; state with no
+version key predates versioning (version 1). Current state is left unchanged, so `migrate` is
+safe on every redeploy, and `scripts/deploy-testnet.sh` always calls it. A change to the state
+layout bumps `STATE_VERSION` and adds an upgrade arm to `migrate`.
 
 ### Verifying on NearBlocks
 
