@@ -17,7 +17,7 @@ No `.env` needed. The contract and token come from `../deployments/testnet.json`
 ## Try it on testnet
 
 1. Connect a testnet wallet (MyNearWallet, Meteor or HERE).
-2. Click **Get 100 test tUSDC**: the test token mints to anyone.
+2. Click **Get tUSDC** to mint 100 test tUSDC; the test token mints to anyone.
 3. Open the demo circle, or create one under **New circle**, add members, start it.
 4. Each round every member deposits; the member whose turn it is withdraws the pot.
 

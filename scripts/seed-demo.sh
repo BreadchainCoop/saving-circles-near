@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Creates a live demo circle on the testnet deployment: three member accounts, round 0
-# fully deposited and paid out to the first member. Re-run any time for a fresh circle.
+# fully deposited and paid out to the first member. Every member then turns on automation
+# and pre-funds the two remaining rounds, so a keeper running process_due deposits and pays
+# out the rest of the circle with no one signing in. Re-run any time for a fresh circle.
 #
 #   NEAR_ACCOUNT=you.testnet scripts/seed-demo.sh
+#   NEAR_ACCOUNT=you.testnet CIRCLE_ID=0 scripts/seed-demo.sh   # automate an existing demo circle
 #
 # Run scripts/deploy-testnet.sh first. Members are sub-accounts of $NEAR_ACCOUNT, created
-# on first run; their keys go to ~/.near-credentials.
+# on first run; their keys go to ~/.near-credentials. With CIRCLE_ID, the circle must be one
+# this script seeded, still in round 1 with no round-1 deposits.
 set -euo pipefail
 
 : "${NEAR_ACCOUNT:?set NEAR_ACCOUNT to the account that ran deploy-testnet.sh}"
@@ -39,20 +43,35 @@ for m in "${MEMBERS[@]}"; do
 done
 
 owner="${ids[0]}"
-circle_id=$(call "$owner" "$CIRCLES" create \
-  "{\"args\":{\"token\":\"$TOKEN\",\"deposit_amount\":\"$DEPOSIT\",\"deposit_interval\":\"$INTERVAL\"}}" \
-  '0.05 NEAR' 2>/dev/null | tail -1 | tr -d '"[:space:]')
-echo "Created circle $circle_id"
+if [ -n "${CIRCLE_ID:-}" ]; then
+  circle_id="$CIRCLE_ID"
+else
+  circle_id=$(call "$owner" "$CIRCLES" create \
+    "{\"args\":{\"token\":\"$TOKEN\",\"deposit_amount\":\"$DEPOSIT\",\"deposit_interval\":\"$INTERVAL\"}}" \
+    '0.05 NEAR' 2>/dev/null | tail -1 | tr -d '"[:space:]')
+  echo "Created circle $circle_id"
 
-call "$owner" "$CIRCLES" add_members \
-  "{\"circle_id\":\"$circle_id\",\"members\":[\"${ids[1]}\",\"${ids[2]}\"]}" '0.05 NEAR'
-call "$owner" "$CIRCLES" start "{\"circle_id\":\"$circle_id\"}" '0.05 NEAR'
+  call "$owner" "$CIRCLES" add_members \
+    "{\"circle_id\":\"$circle_id\",\"members\":[\"${ids[1]}\",\"${ids[2]}\"]}" '0.05 NEAR'
+  call "$owner" "$CIRCLES" start "{\"circle_id\":\"$circle_id\"}" '0.05 NEAR'
 
+  for id in "${ids[@]}"; do
+    call "$id" "$TOKEN" ft_transfer_call \
+      "{\"receiver_id\":\"$CIRCLES\",\"amount\":\"$DEPOSIT\",\"msg\":\"{\\\"circle_id\\\":\\\"$circle_id\\\"}\"}" \
+      '1 yoctoNEAR'
+  done
+  call "$owner" "$CIRCLES" withdraw "{\"circle_id\":\"$circle_id\"}" '0 NEAR'
+fi
+
+# Rounds 1 and 2 run themselves: each member pre-funds both deposits, and a keeper's
+# process_due moves them in each round and pays out bob, then carol.
 for id in "${ids[@]}"; do
+  call "$id" "$CIRCLES" set_automation \
+    "{\"circle_id\":\"$circle_id\",\"deposits\":true,\"claims\":true}" '0.01 NEAR'
   call "$id" "$TOKEN" ft_transfer_call \
-    "{\"receiver_id\":\"$CIRCLES\",\"amount\":\"$DEPOSIT\",\"msg\":\"{\\\"circle_id\\\":\\\"$circle_id\\\"}\"}" \
+    "{\"receiver_id\":\"$CIRCLES\",\"amount\":\"$((DEPOSIT * 2))\",\"msg\":\"{\\\"circle_id\\\":\\\"$circle_id\\\",\\\"prefund\\\":true}\"}" \
     '1 yoctoNEAR'
 done
-call "$owner" "$CIRCLES" withdraw "{\"circle_id\":\"$circle_id\"}" '0 NEAR'
 
 echo "Demo circle $circle_id: round 0 paid to $owner; ${ids[1]} is next."
+echo "Automation is on and pre-funded for every member; a keeper runs the remaining rounds."
