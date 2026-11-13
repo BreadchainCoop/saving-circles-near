@@ -9,7 +9,10 @@ and the group has to trust them. Here a NEAR contract holds the pot and enforces
 - only the member whose turn it is can withdraw,
 - if someone misses a round, everyone can take back what they put in.
 
-Built by [Bread Cooperative](https://bread.coop) for **NEAR HACKATHON** (1–14 Nov 2026).
+Built by [Bread Cooperative](https://bread.coop) for **NEAR HACKATHON** (1–14 Nov 2026). It
+ports Bread's existing savings-circle product, Stacks, to NEAR. Bread's docs explain
+[what a savings circle is](https://docs.bread.coop/tools/stacks/what-is-a-savings-circle/)
+and [how Stacks works](https://docs.bread.coop/tools/stacks/how-stacks-works/).
 
 - **Live demo:** https://saving-circles.netlify.app (NEAR testnet)
 - **Tracks:** Social Money (`social`), Real-World Money (`realworld`)
@@ -163,7 +166,7 @@ near contract call-function as-transaction usdc.bread-saving-circles.testnet min
 ## Prior work and what is judged
 
 Saving Circles already runs on Gnosis and Celo as Solidity contracts with a Next.js
-frontend. Per the hackathon rules (Q-002 to Q-004), that EVM product is **baseline** and is
+frontend, as Bread's [Stacks](https://docs.bread.coop/tools/stacks/what-is-a-savings-circle/). Per the hackathon rules (Q-002 to Q-004), that EVM product is **baseline** and is
 not part of this submission. **Only the NEAR integration built during the hackathon window
 is submitted for judging.**
 
