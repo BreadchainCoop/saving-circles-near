@@ -11,13 +11,17 @@ pnpm dev        # http://localhost:3002
 pnpm build      # static site in out/
 ```
 
-No `.env` needed. The contract and token come from `../deployments/testnet.json`;
-`NEXT_PUBLIC_CONTRACT_ID` overrides the contract (see `.env.example`).
+No `.env` needed. The app defaults to NEAR testnet, with the contract and token from
+`../deployments/testnet.json`. `NEXT_PUBLIC_NEAR_NETWORK=mainnet` switches the network; on
+mainnet `NEXT_PUBLIC_CONTRACT_ID` and `NEXT_PUBLIC_TOKEN_ID` are required, and the testnet
+faucet button is hidden. All settings are in `.env.example` and are read at build time.
+
+Hosted at https://saving-circles.netlify.app (Netlify, configured by `netlify.toml`).
 
 ## Try it on testnet
 
 1. Connect a testnet wallet (MyNearWallet, Meteor or HERE).
-2. Click **Get 100 test tUSDC**: the test token mints to anyone.
+2. Click **Get tUSDC** to mint 100 test tUSDC; the test token mints to anyone.
 3. Open the demo circle, or create one under **New circle**, add members, start it.
 4. Each round every member deposits; the member whose turn it is withdraws the pot.
 

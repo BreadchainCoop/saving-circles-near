@@ -62,7 +62,7 @@ export default function AccountPage() {
         </div>
         <div className="flex flex-wrap items-center gap-4">
           <span className="flex flex-col">
-            <span className="text-sm text-surface-grey-2">{NEAR_CONFIG.token.symbol} balance · NEAR testnet</span>
+            <span className="text-sm text-surface-grey-2">{NEAR_CONFIG.token.symbol} balance · {NEAR_CONFIG.networkName}</span>
             <Amount value={balance} className="text-3xl" />
           </span>
           <FaucetButton />

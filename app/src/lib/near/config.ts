@@ -1,16 +1,60 @@
 import testnet from "../../../../deployments/testnet.json";
 
+/**
+ * Network endpoints. NEXT_PUBLIC_NEAR_NETWORK picks one at build time; testnet is the default.
+ * Next.js inlines NEXT_PUBLIC_* values only when they are read by their literal names.
+ */
+const NETWORKS = {
+  testnet: {
+    rpcUrl: "https://test.rpc.fastnear.com",
+    explorerUrl: "https://testnet.nearblocks.io",
+    accountSuffix: "testnet",
+  },
+  mainnet: {
+    rpcUrl: "https://free.rpc.fastnear.com",
+    explorerUrl: "https://nearblocks.io",
+    accountSuffix: "near",
+  },
+} as const;
+
+type NetworkId = keyof typeof NETWORKS;
+
+const network = process.env.NEXT_PUBLIC_NEAR_NETWORK || "testnet";
+if (!Object.hasOwn(NETWORKS, network)) {
+  throw new Error(`NEXT_PUBLIC_NEAR_NETWORK must be "testnet" or "mainnet", not "${network}"`);
+}
+const networkId = network as NetworkId;
+
+// deployments/testnet.json describes the testnet deployment only. Any other network names its
+// contract and token explicitly, so the app can't point mainnet users at testnet accounts.
+const defaults = networkId === "testnet" ? testnet : null;
+const contractId = process.env.NEXT_PUBLIC_CONTRACT_ID || defaults?.contract;
+const tokenId = process.env.NEXT_PUBLIC_TOKEN_ID || defaults?.token;
+if (!contractId || !tokenId) {
+  throw new Error(`Set NEXT_PUBLIC_CONTRACT_ID and NEXT_PUBLIC_TOKEN_ID for ${networkId}`);
+}
+// The committed test token, which mints to anyone, unless a token is named explicitly.
+const testToken = networkId === "testnet" && !process.env.NEXT_PUBLIC_TOKEN_ID;
+const decimals = Number(process.env.NEXT_PUBLIC_TOKEN_DECIMALS || defaults?.token_decimals || 6);
+if (!Number.isInteger(decimals) || decimals < 0) {
+  throw new Error(`NEXT_PUBLIC_TOKEN_DECIMALS must be a whole number, not "${process.env.NEXT_PUBLIC_TOKEN_DECIMALS}"`);
+}
+
 /** Where the app points. Defaults to the committed testnet deployment. */
 export const NEAR_CONFIG = {
-  networkId: "testnet" as const,
-  rpcUrl: "https://test.rpc.fastnear.com",
-  explorerUrl: "https://testnet.nearblocks.io",
-  contractId: process.env.NEXT_PUBLIC_CONTRACT_ID || testnet.contract,
+  networkId,
+  /** "NEAR testnet" or "NEAR mainnet", for labels. */
+  networkName: `NEAR ${networkId}`,
+  ...NETWORKS[networkId],
+  rpcUrl: process.env.NEXT_PUBLIC_NEAR_RPC_URL || NETWORKS[networkId].rpcUrl,
+  contractId,
   token: {
-    id: testnet.token,
-    symbol: "tUSDC",
-    decimals: testnet.token_decimals,
+    id: tokenId,
+    symbol: process.env.NEXT_PUBLIC_TOKEN_SYMBOL || (testToken ? "tUSDC" : "USDC"),
+    decimals,
   },
+  /** The test token mints to anyone; real tokens don't. */
+  faucet: testToken,
 };
 
 /** Gas in TGas, converted to gas units by the client. */

@@ -526,7 +526,7 @@ function AddMembers({
     try {
       const exists = await Promise.all(ids.map(accountExists));
       const missing = ids.filter((_, i) => !exists[i]);
-      if (missing.length) return setError(`Not found on NEAR testnet: ${missing.join(", ")}`);
+      if (missing.length) return setError(`Not found on ${NEAR_CONFIG.networkName}: ${missing.join(", ")}`);
       onAdd(ids);
       setText("");
     } catch (e) {
@@ -546,7 +546,7 @@ function AddMembers({
         className="field min-h-24"
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder="alice.testnet, bob.testnet"
+        placeholder={`alice.${NEAR_CONFIG.accountSuffix}, bob.${NEAR_CONFIG.accountSuffix}`}
         autoCapitalize="none"
         spellCheck={false}
       />

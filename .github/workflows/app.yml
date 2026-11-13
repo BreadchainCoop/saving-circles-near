@@ -1,0 +1,45 @@
+name: app
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/**", "deployments/**", ".github/workflows/app.yml"]
+  pull_request:
+    paths: ["app/**", "deployments/**", ".github/workflows/app.yml"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: app
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # pnpm at the version pinned in app/package.json. pnpm-workspace.yaml blocks install scripts.
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - name: Build for testnet (the default, as deployed)
+        run: pnpm build
+      - name: Build for mainnet with a contract and token
+        run: pnpm build
+        env:
+          NEXT_PUBLIC_NEAR_NETWORK: mainnet
+          NEXT_PUBLIC_CONTRACT_ID: circles.example.near
+          NEXT_PUBLIC_TOKEN_ID: usdc.example.near
+      - name: Mainnet without a contract and token fails
+        run: |
+          if NEXT_PUBLIC_NEAR_NETWORK=mainnet pnpm build > mainnet.log 2>&1; then
+            echo "::error::a mainnet build must require NEXT_PUBLIC_CONTRACT_ID and NEXT_PUBLIC_TOKEN_ID"
+            exit 1
+          fi
+          grep -q "Set NEXT_PUBLIC_CONTRACT_ID and NEXT_PUBLIC_TOKEN_ID for mainnet" mainnet.log \
+            || { tail -40 mainnet.log; exit 1; }

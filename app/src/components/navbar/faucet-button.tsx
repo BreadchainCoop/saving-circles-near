@@ -10,6 +10,8 @@ import { cn } from "@/lib/cn";
  */
 export function FaucetButton({ className }: { className?: string }) {
   const { mint, pending } = useFaucet();
+  // Only the testnet test token mints to anyone.
+  if (!NEAR_CONFIG.faucet) return null;
   return (
     <button
       type="button"
