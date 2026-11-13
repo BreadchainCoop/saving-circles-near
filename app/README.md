@@ -11,8 +11,12 @@ pnpm dev        # http://localhost:3002
 pnpm build      # static site in out/
 ```
 
-No `.env` needed. The contract and token come from `../deployments/testnet.json`;
-`NEXT_PUBLIC_CONTRACT_ID` overrides the contract (see `.env.example`).
+No `.env` needed. The app defaults to NEAR testnet, with the contract and token from
+`../deployments/testnet.json`. `NEXT_PUBLIC_NEAR_NETWORK=mainnet` switches the network; on
+mainnet `NEXT_PUBLIC_CONTRACT_ID` and `NEXT_PUBLIC_TOKEN_ID` are required, and the testnet
+faucet button is hidden. All settings are in `.env.example` and are read at build time.
+
+Hosted at https://saving-circles.netlify.app (Netlify, configured by `netlify.toml`).
 
 ## Try it on testnet
 

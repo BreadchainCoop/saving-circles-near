@@ -54,7 +54,7 @@ export function AccountDetails({ className }: { className?: string }) {
         <Amount value={balance} />
       </Row>
       <Row icon={GraphIcon} label="Network">
-        <span className="font-bold">NEAR testnet</span>
+        <span className="font-bold">{NEAR_CONFIG.networkName}</span>
       </Row>
       <Button variant="burn" fullWidth rightIcon={<SignOutIcon size={22} />} onClick={signOut}>
         Sign out

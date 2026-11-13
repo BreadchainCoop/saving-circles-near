@@ -94,7 +94,7 @@ export function CreateForm() {
     if (Object.keys(errors).length === 0) {
       const exists = await Promise.all(others.map((m) => (m.trim() ? accountExists(m.trim().toLowerCase()) : true)));
       exists.forEach((ok, i) => {
-        if (!ok) errors[i] = "No such account on NEAR testnet";
+        if (!ok) errors[i] = `No such account on ${NEAR_CONFIG.networkName}`;
       });
     }
     setMemberErrors(errors);
@@ -168,7 +168,7 @@ export function CreateForm() {
                     className="field flex-1 bg-transparent px-0"
                     value={m}
                     onChange={(e) => setOther(i, e.target.value)}
-                    placeholder="friend.testnet"
+                    placeholder={`friend.${NEAR_CONFIG.accountSuffix}`}
                     aria-label={`Member ${i + 2} account ID`}
                     aria-invalid={!!memberErrors[i]}
                     autoCapitalize="none"

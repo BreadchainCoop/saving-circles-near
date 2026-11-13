@@ -6,6 +6,7 @@ import { useAllCircles, useMyCircles } from "@/hooks/use-circles";
 import { CircleList } from "@/components/circle-list";
 import { HeroBanner } from "@/components/hero-banner";
 import { Button } from "@/components/ui/button";
+import { NEAR_CONFIG } from "@/lib/near/config";
 
 export default function Home() {
   const { accountId } = useWallet();
@@ -36,7 +37,7 @@ export default function Home() {
 
       <CircleList
         title="All circles"
-        description="Peek into every circle on NEAR testnet, newest first."
+        description={`Peek into every circle on ${NEAR_CONFIG.networkName}, newest first.`}
         circles={allCircles}
         isLoading={all.isLoading}
         empty="No circles yet."

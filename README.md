@@ -11,15 +11,16 @@ and the group has to trust them. Here a NEAR contract holds the pot and enforces
 
 Built by [Bread Cooperative](https://bread.coop) for **NEAR HACKATHON** (1–14 Nov 2026).
 
+- **Live demo:** https://saving-circles.netlify.app (NEAR testnet)
 - **Tracks:** Social Money (`social`), Real-World Money (`realworld`)
 - **Network:** NEAR testnet, with a test stablecoin (tUSDC)
 - **Status:** in development
 
 ## Try it
 
-_A hosted demo link is coming ([#7](https://github.com/BreadchainCoop/saving-circles-near/issues/7)).
-Until then, run the app locally with [one command](#run-it-locally); it uses the same testnet
-contract._
+Open **https://saving-circles.netlify.app**. It is the `app/` frontend, running against the
+testnet contract below. To run the same app locally, see
+[Run it locally](#run-it-locally).
 
 ### In the browser: do X, see Y
 
@@ -99,7 +100,8 @@ cd app && pnpm dev        # http://localhost:3002, against the testnet deploymen
 ```
 
 The app needs no `.env`: it reads the contract and token from
-[`deployments/testnet.json`](deployments/testnet.json). CI runs the contract's format, lint
+[`deployments/testnet.json`](deployments/testnet.json). The network, contract and token can be
+set at build time (see [`app/.env.example`](app/.env.example)). CI runs the contract's format, lint
 and test checks on every pull request that changes `contracts/`.
 
 ### Deploy your own

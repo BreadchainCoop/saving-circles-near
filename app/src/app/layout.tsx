@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 import Providers from "@/providers";
 import { Navbar } from "@/components/navbar";
+import { NEAR_CONFIG } from "@/lib/near/config";
 
 export const metadata: Metadata = {
   title: "Saving Circles on NEAR",
@@ -23,7 +24,7 @@ export default function RootLayout({
           <Navbar />
           <main className="page-layout flex-1 py-8">{children}</main>
           <footer className="page-layout py-8 text-caption text-surface-grey-2">
-            Built by Bread Cooperative. Testnet demo.
+            Built by Bread Cooperative. {NEAR_CONFIG.networkId === "testnet" ? "Testnet demo." : "Hackathon demo: use small amounts."}
           </footer>
         </Providers>
       </body>
