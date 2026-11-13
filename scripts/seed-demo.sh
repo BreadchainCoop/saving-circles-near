@@ -9,7 +9,7 @@
 #
 # Run scripts/deploy-testnet.sh first. Members are sub-accounts of $NEAR_ACCOUNT, created
 # on first run; their keys go to ~/.near-credentials. With CIRCLE_ID, the circle must be one
-# this script seeded, still in round 1 with no round-1 deposits.
+# this script seeded. Members who already have a pre-funded balance are left as they are.
 set -euo pipefail
 
 : "${NEAR_ACCOUNT:?set NEAR_ACCOUNT to the account that ran deploy-testnet.sh}"
@@ -63,9 +63,21 @@ else
   call "$owner" "$CIRCLES" withdraw "{\"circle_id\":\"$circle_id\"}" '0 NEAR'
 fi
 
+prefunded() { # member: their pre-funded balance in this circle, empty if none
+  near contract call-function as-read-only "$CIRCLES" get_automation \
+    json-args "{\"circle_id\":\"$circle_id\",\"member\":\"$1\"}" network-config "$NETWORK" now 2>/dev/null \
+    | sed -n 's/.*"balance": *"\([0-9]*\)".*/\1/p' | head -1
+}
+
 # Rounds 1 and 2 run themselves: each member pre-funds both deposits, and a keeper's
-# process_due moves them in each round and pays out bob, then carol.
+# process_due moves them in each round and pays out bob, then carol. A member who already
+# has a pre-funded balance is skipped, so re-running doesn't pre-fund twice.
 for id in "${ids[@]}"; do
+  balance=$(prefunded "$id")
+  if [ -n "$balance" ] && [ "$balance" != 0 ]; then
+    echo "$id already has $balance pre-funded in circle $circle_id; skipping"
+    continue
+  fi
   call "$id" "$CIRCLES" set_automation \
     "{\"circle_id\":\"$circle_id\",\"deposits\":true,\"claims\":true}" '0.01 NEAR'
   call "$id" "$TOKEN" ft_transfer_call \

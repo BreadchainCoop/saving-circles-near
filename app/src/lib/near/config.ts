@@ -20,7 +20,7 @@ const NETWORKS = {
 type NetworkId = keyof typeof NETWORKS;
 
 const network = process.env.NEXT_PUBLIC_NEAR_NETWORK || "testnet";
-if (!(network in NETWORKS)) {
+if (!Object.hasOwn(NETWORKS, network)) {
   throw new Error(`NEXT_PUBLIC_NEAR_NETWORK must be "testnet" or "mainnet", not "${network}"`);
 }
 const networkId = network as NetworkId;
@@ -33,6 +33,12 @@ const tokenId = process.env.NEXT_PUBLIC_TOKEN_ID || defaults?.token;
 if (!contractId || !tokenId) {
   throw new Error(`Set NEXT_PUBLIC_CONTRACT_ID and NEXT_PUBLIC_TOKEN_ID for ${networkId}`);
 }
+// The committed test token, which mints to anyone, unless a token is named explicitly.
+const testToken = networkId === "testnet" && !process.env.NEXT_PUBLIC_TOKEN_ID;
+const decimals = Number(process.env.NEXT_PUBLIC_TOKEN_DECIMALS || defaults?.token_decimals || 6);
+if (!Number.isInteger(decimals) || decimals < 0) {
+  throw new Error(`NEXT_PUBLIC_TOKEN_DECIMALS must be a whole number, not "${process.env.NEXT_PUBLIC_TOKEN_DECIMALS}"`);
+}
 
 /** Where the app points. Defaults to the committed testnet deployment. */
 export const NEAR_CONFIG = {
@@ -44,11 +50,11 @@ export const NEAR_CONFIG = {
   contractId,
   token: {
     id: tokenId,
-    symbol: process.env.NEXT_PUBLIC_TOKEN_SYMBOL || (defaults ? "tUSDC" : "USDC"),
-    decimals: Number(process.env.NEXT_PUBLIC_TOKEN_DECIMALS || defaults?.token_decimals || 6),
+    symbol: process.env.NEXT_PUBLIC_TOKEN_SYMBOL || (testToken ? "tUSDC" : "USDC"),
+    decimals,
   },
   /** The test token mints to anyone; real tokens don't. */
-  faucet: networkId === "testnet" && !process.env.NEXT_PUBLIC_TOKEN_ID,
+  faucet: testToken,
 };
 
 /** Gas in TGas, converted to gas units by the client. */

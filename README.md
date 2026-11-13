@@ -75,8 +75,9 @@ demo circle's remaining rounds and pays out Bob and then Carol.
 
 ### Where each claim is tested
 
-`cargo test --workspace` runs 40 unit tests and 6 integration tests. The integration tests
-deploy the real wasm, plus a NEP-141 test token, to a local NEAR sandbox:
+`cargo test --workspace` runs 48 tests: 40 contract unit tests, 6 integration tests and 2
+tests of the test token. The integration tests deploy the real wasm, plus the NEP-141 test
+token, to a local NEAR sandbox:
 
 | Claim | Integration test in [`contracts/tests/integration.rs`](contracts/tests/integration.rs) |
 |---|---|
@@ -191,8 +192,8 @@ was written during the hackathon on the `near-hackathon` branch:
 
 **Hackathon work:** everything after the `pre-hackathon` tag.
 
-- Full diff: [`pre-hackathon...hackathon-submission`](https://github.com/BreadchainCoop/saving-circles-near/compare/pre-hackathon...hackathon-submission)
-  (until the submission tag exists: [`pre-hackathon...main`](https://github.com/BreadchainCoop/saving-circles-near/compare/pre-hackathon...main))
+- Full diff: [`pre-hackathon...main`](https://github.com/BreadchainCoop/saving-circles-near/compare/pre-hackathon...main)
+  (becomes `pre-hackathon...hackathon-submission` when the submission is tagged)
 
 ## Repository layout
 
