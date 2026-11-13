@@ -70,8 +70,10 @@ to the member whose round has ended. Bread runs a keeper that calls it every min
 [`bread-keeper.testnet`](https://testnet.nearblocks.io/address/bread-keeper.testnet). That
 account's key is a NEAR function-call access key: it can call only `process_due` on this
 contract, and spend at most 1 NEAR on gas. It cannot move anyone's tokens. The keeper's
-`process_due` transactions appear on its NearBlocks page. There is no automation UI in the app
-yet; the calls are listed in [`contracts/README.md`](contracts/README.md#automatic-deposits-and-claims).
+`process_due` transactions appear on its NearBlocks page. In the app, a member turns on
+**Automatic Deposits** or **Automatic Claims** from **Your position** on the circle page; turning
+on deposits pre-funds every deposit they still owe. The contract calls are listed in
+[`contracts/README.md`](contracts/README.md#automatic-deposits-and-claims).
 
 `scripts/seed-demo.sh` turns automation on for the demo members, so the keeper runs the
 demo circle's remaining rounds and pays out Bob and then Carol.
