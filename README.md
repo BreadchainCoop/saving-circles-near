@@ -102,7 +102,8 @@ cd app && pnpm dev        # http://localhost:3002, against the testnet deploymen
 The app needs no `.env`: it reads the contract and token from
 [`deployments/testnet.json`](deployments/testnet.json). The network, contract and token can be
 set at build time (see [`app/.env.example`](app/.env.example)). CI runs the contract's format, lint
-and test checks on every pull request that changes `contracts/`.
+and test checks on every pull request that changes `contracts/`, and typechecks and builds
+the app (for testnet and mainnet) on every pull request that changes `app/`.
 
 ### Deploy your own
 
