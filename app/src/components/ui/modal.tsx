@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { CheckCircleIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react";
 import { cn } from "@/lib/cn";
 import { Spinner } from "./spinner";
@@ -20,20 +20,38 @@ export function Modal({
   status?: Status;
   children: ReactNode;
 }) {
+  const dialog = useRef<HTMLDivElement>(null);
+  // While the wallet is open, Escape and stray backdrop clicks shouldn't hide
+  // the pending status; the close button still works.
+  const dismissible = status !== "loading";
+
   useEffect(() => {
+    if (!dismissible) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, dismissible]);
+
+  // Move focus into the dialog on open and hand it back on close.
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    dialog.current?.focus();
+    return () => previous?.focus();
+  }, []);
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-surface-ink/40 p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-surface-ink/40 p-4"
+      onClick={dismissible ? onClose : undefined}
+    >
       <div
+        ref={dialog}
         role="dialog"
         aria-modal="true"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         className={cn(
-          "relative flex max-h-[calc(100vh-2rem)] w-full max-w-142 flex-col gap-6 overflow-y-auto border bg-paper-0 p-5 text-left shadow-[0px_4px_12px_0px_#1B201A26]",
+          "relative flex max-h-[calc(100vh-2rem)] w-full max-w-142 flex-col gap-6 overflow-y-auto border bg-paper-0 p-5 text-left shadow-[0px_4px_12px_0px_#1B201A26] outline-none",
           status === "success" ? "border-system-green" : status === "error" ? "border-system-red" : "border-transparent"
         )}
       >
