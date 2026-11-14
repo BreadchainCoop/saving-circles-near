@@ -35,7 +35,7 @@ function Brand() {
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   return (
-    <nav className="flex flex-col gap-4 md:flex-row md:items-center md:gap-6">
+    <nav className="flex flex-col gap-4 md:text-center md:flex-row md:items-center md:gap-2 lg:gap-4">
       {LINKS.map(({ href, label }) => {
         const active = samePath(pathname, href);
         return (
