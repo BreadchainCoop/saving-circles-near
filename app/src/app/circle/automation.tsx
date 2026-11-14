@@ -117,8 +117,9 @@ export function AutomaticDeposits({
   disabled?: boolean;
   onDone: () => Promise<unknown>;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState<null | "toggle" | "topUp">(null);
   const enabled = automation.deposits;
+  const covered = coveredRounds(automation.balance, circle.deposit_amount, pendingDeposits);
 
   return (
     <>
@@ -126,7 +127,15 @@ export function AutomaticDeposits({
         <Callout title="Secure your next deposits" className="text-left">
           <p className="m-0">
             <strong>{plural(pendingDeposits, "deposit")}</strong> left in this circle. Missing one ends the circle
-            for everyone. Activate automatic deposits and they are made for you in every remaining round.
+            for everyone. Activate automatic deposits and they are made for you from a balance you pre-fund.
+          </p>
+        </Callout>
+      )}
+      {enabled && covered === 0 && (
+        <Callout title="Top up to keep automatic deposits going" className="text-left">
+          <p className="m-0">
+            Your pre-funded balance doesn&apos;t cover your next deposit, so it won&apos;t be made for you. Top up,
+            or deposit yourself before the round ends.
           </p>
         </Callout>
       )}
@@ -136,14 +145,28 @@ export function AutomaticDeposits({
         name="Automatic Deposits"
         checked={enabled}
         disabled={disabled}
-        onChange={() => setOpen(true)}
+        onChange={() => setOpen("toggle")}
       />
+      {enabled && (
+        <div className="flex flex-wrap items-center gap-2 text-left text-sm text-surface-grey-2">
+          <span className="mr-auto">
+            Pre-funded <Amount value={automation.balance} />: covers {covered} of your{" "}
+            {plural(pendingDeposits, "remaining deposit")}.
+          </span>
+          {covered < pendingDeposits && (
+            <Button size="sm" variant="light" disabled={disabled} onClick={() => setOpen("topUp")}>
+              Top up
+            </Button>
+          )}
+        </div>
+      )}
       {open && (
         <AutomaticDepositsModal
+          mode={open}
           circle={circle}
           automation={automation}
           pendingDeposits={pendingDeposits}
-          onClose={() => setOpen(false)}
+          onClose={() => setOpen(null)}
           onDone={onDone}
         />
       )}
@@ -151,22 +174,61 @@ export function AutomaticDeposits({
   );
 }
 
+/** Whole deposits a pre-funded balance pays for, capped at what's still owed. */
+function coveredRounds(balance: string, depositAmount: string, pending: number) {
+  const deposit = BigInt(depositAmount);
+  if (deposit === ZERO) return pending;
+  const rounds = BigInt(balance) / deposit;
+  return rounds > BigInt(pending) ? pending : Number(rounds);
+}
+
+/** Picks how many of the remaining rounds the pre-funded balance should cover. */
+function RoundsPicker({ value, max, onChange }: { value: number; max: number; onChange: (n: number) => void }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <span id="rounds-label" className="font-bold">
+        Rounds to cover
+      </span>
+      <div role="group" aria-labelledby="rounds-label" className="flex items-center gap-2">
+        <Button size="sm" variant="light" aria-label="Fewer rounds" disabled={value <= 1} onClick={() => onChange(value - 1)}>
+          −
+        </Button>
+        <span className="min-w-16 text-center" aria-live="polite">
+          {value} of {max}
+        </span>
+        <Button size="sm" variant="light" aria-label="More rounds" disabled={value >= max} onClick={() => onChange(value + 1)}>
+          +
+        </Button>
+        {value < max && (
+          <Button size="sm" variant="light" onClick={() => onChange(max)}>
+            All
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AutomaticDepositsModal({
+  mode,
   circle,
   automation,
   pendingDeposits,
   onClose,
   onDone,
 }: {
+  /** "toggle" turns automatic deposits on or off; "topUp" adds to the balance while they're on. */
+  mode: "toggle" | "topUp";
   circle: CircleView;
   automation: Automation;
   pendingDeposits: number;
   onClose: () => void;
   onDone: () => Promise<unknown>;
 }) {
-  // Captured on open so the success message doesn't flip when the refetch lands.
-  const [enabling] = useState(!automation.deposits);
-  const [step, setStep] = useState<"intro" | "summary" | "insufficient">("intro");
+  // Captured on open so the copy doesn't flip when the refetch lands.
+  const [topUpOnly] = useState(mode === "topUp" && automation.deposits);
+  const [enabling] = useState(topUpOnly || !automation.deposits);
+  const [step, setStep] = useState<"intro" | "summary" | "insufficient">(topUpOnly ? "summary" : "intro");
   const { run, status, setStatus, error } = useTx(onDone);
   const tokenBalance = useTokenBalance();
   // Until the balance loads, don't call it insufficient.
@@ -174,14 +236,22 @@ function AutomaticDepositsModal({
   const balance = BigInt(tokenBalance.data ?? "0");
 
   const deposit = BigInt(circle.deposit_amount);
-  const total = deposit * BigInt(Math.max(0, pendingDeposits));
   const prefunded = BigInt(automation.balance);
+  const max = Math.max(1, pendingDeposits);
+  // Activating covers the next deposit, or whatever an earlier balance already
+  // covers; topping up starts at one round more than is covered now.
+  const [rounds, setRounds] = useState(() => {
+    const covered = coveredRounds(automation.balance, circle.deposit_amount, pendingDeposits);
+    return Math.min(max, topUpOnly ? covered + 1 : Math.max(1, covered));
+  });
+  const total = deposit * BigInt(rounds);
   const topUp = total > prefunded ? total - prefunded : ZERO;
   const missing = topUp > balance ? topUp - balance : ZERO;
 
   const activate = () => {
     if (!balanceKnown) return;
     if (missing > ZERO) return setStep("insufficient");
+    if (topUpOnly) return run([automationCalls.prefund(circle, topUp.toString())]);
     // Settings first: the contract refuses a pre-fund until they exist.
     const calls = [automationCalls.set(circle.id, { deposits: true, claims: automation.claims })];
     if (topUp > ZERO) calls.push(automationCalls.prefund(circle, topUp.toString()));
@@ -209,10 +279,15 @@ function AutomaticDepositsModal({
   if (status === "success") {
     return (
       <Modal onClose={onClose} status="success">
-        <ModalStatus status="success" message={`Automatic deposits ${enabling ? "activated" : "deactivated"}!`} />
+        <ModalStatus
+          status="success"
+          message={
+            topUpOnly ? "Pre-funded balance topped up!" : `Automatic deposits ${enabling ? "activated" : "deactivated"}!`
+          }
+        />
         <p className="m-0 text-center text-surface-grey-2">
           {enabling
-            ? "A keeper makes your deposit from the balance you pre-funded within about a minute of each round opening, including this one if it's still unpaid."
+            ? `A keeper makes your deposit from the balance you pre-funded within about a minute of each round opening, including this one if it's still unpaid. Your balance covers ${plural(rounds, "round")}; top up from the circle page to cover more.`
             : "Automatic deposits are off, and any unused pre-funded balance is back in your wallet."}
         </p>
         <Button fullWidth onClick={onClose}>
@@ -267,9 +342,14 @@ function AutomaticDepositsModal({
   if (step === "insufficient") {
     return (
       <Modal onClose={onClose} status="error">
-        <ModalStatus status="error" message="You don't have enough balance to activate this" />
+        <ModalStatus
+          status="error"
+          message={`You don't have enough balance to ${topUpOnly ? "top up" : "activate this"}`}
+        />
         <h2 className="m-0 -mt-2 text-center font-breadDisplay text-2xl font-black">Automatic Deposits</h2>
-        <p className="m-0 text-center font-bold text-surface-grey-2">Your wallet needs more funds</p>
+        <p className="m-0 text-center font-bold text-surface-grey-2">
+          Your wallet needs more funds, or cover fewer rounds
+        </p>
         <dl className="m-0 flex flex-col gap-4 border border-blue-0 p-4">
           <StatRow label="Required" value={<Amount value={topUp.toString()} />} />
           <StatRow label="Your balance" value={<Amount value={balance.toString()} />} />
@@ -296,15 +376,16 @@ function AutomaticDepositsModal({
   if (step === "intro") {
     return (
       <Modal onClose={onClose}>
-        <ModalTitle icon={icon} title="Automatic Deposits" subtitle="You pre-fund your remaining deposits" />
+        <ModalTitle icon={icon} title="Automatic Deposits" subtitle="You pre-fund the rounds you choose" />
         <p className="m-0 text-center text-surface-grey-2">
-          NEAR tokens can&apos;t grant a spending permission, so you pre-fund your remaining deposits in the circle
-          contract instead. Each round, a keeper moves exactly one deposit from that balance. You can turn this off
-          anytime and get the rest back.
+          NEAR tokens can&apos;t grant a spending permission, so you pre-fund a balance in the circle contract
+          instead. Each round, a keeper moves exactly one deposit from that balance. Cover as few as one round and
+          top up later, and turn this off anytime to get the rest back.
         </p>
-        <Callout title="Cover every remaining round">
-          If an automatic deposit can&apos;t be made, the round is missed and the circle can be ended. Pre-funding
-          covers all {plural(pendingDeposits, "deposit")} you still owe.
+        <Callout title="Keep the balance topped up">
+          If your balance doesn&apos;t cover a round, that round&apos;s automatic deposit isn&apos;t made. Deposit
+          yourself before the round ends, or the round is missed and the circle can be ended. You still owe{" "}
+          {plural(pendingDeposits, "deposit")}.
         </Callout>
         <Button fullWidth rightIcon={<ArrowRightIcon size={20} />} onClick={() => setStep("summary")}>
           Continue
@@ -315,7 +396,12 @@ function AutomaticDepositsModal({
 
   return (
     <Modal onClose={onClose}>
-      <ModalTitle icon={icon} title="Automatic Deposits" subtitle="You pre-fund your remaining deposits" />
+      <ModalTitle
+        icon={icon}
+        title={topUpOnly ? "Top up Automatic Deposits" : "Automatic Deposits"}
+        subtitle="You pre-fund the rounds you choose"
+      />
+      <RoundsPicker value={rounds} max={max} onChange={setRounds} />
       <div className="flex flex-col gap-4 bg-paper-1 p-4">
         <h3 className="m-0 border-b border-paper-2 pb-3 font-breadDisplay text-2xl font-black">Summary</h3>
         <dl className="m-0 flex flex-col gap-4">
@@ -343,16 +429,16 @@ function AutomaticDepositsModal({
             }
           />
           <StatRow
-            label="Automatic deposits"
+            label="Rounds covered"
             value={
               <span className="inline-flex items-center gap-1">
-                {plural(pendingDeposits, "round")}
+                {rounds} of {plural(pendingDeposits, "remaining round")}
                 <ArrowsClockwiseIcon size={20} className="text-blue-2" />
               </span>
             }
           />
           <StatRow label="Deposit per round" value={<Amount value={circle.deposit_amount} />} />
-          <StatRow label="Total deposit" value={<Amount value={total.toString()} />} />
+          <StatRow label={`Balance for ${plural(rounds, "round")}`} value={<Amount value={total.toString()} />} />
           {prefunded > ZERO && (
             <StatRow label="Already pre-funded" value={<Amount value={prefunded.toString()} />} />
           )}
@@ -363,17 +449,18 @@ function AutomaticDepositsModal({
         </dl>
       </div>
       <p className="m-0 text-center text-surface-grey-2">
-        Your wallet asks you to approve turning automation on (0.01 NEAR for storage the first time, the unused
-        part refunded) and, if needed, the pre-fund transfer.
+        {topUpOnly
+          ? "Your wallet asks you to approve the pre-fund transfer."
+          : "Your wallet asks you to approve turning automation on (0.01 NEAR for storage the first time, the unused part refunded) and, if needed, the pre-fund transfer."}
       </p>
       <Button
         fullWidth
         className="bg-system-green hover:bg-system-green/90"
         rightIcon={<HandDepositIcon size={20} />}
-        disabled={!balanceKnown}
+        disabled={!balanceKnown || (topUpOnly && topUp === ZERO)}
         onClick={activate}
       >
-        {topUp > ZERO ? "Pre-fund and activate" : "Activate"}
+        {topUpOnly ? "Top up" : topUp > ZERO ? "Pre-fund and activate" : "Activate"}
       </Button>
     </Modal>
   );
