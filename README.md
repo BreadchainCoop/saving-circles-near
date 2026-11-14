@@ -15,6 +15,9 @@ ports Bread's existing savings-circle product, Stacks, to NEAR. Bread's docs exp
 and [how Stacks works](https://docs.bread.coop/tools/stacks/how-stacks-works/).
 
 - **Live demo:** https://saving-circles.netlify.app (NEAR testnet)
+- **Demo video:** [2-minute walkthrough on X](https://x.com/0xbagelface/status/2121633777956872454):
+  creating and starting a circle, deposits, the payout, automatic deposits and claims, and Bread's
+  docs on savings circles.
 - **Tracks:** Social Money (`social`), Real-World Money (`realworld`)
 - **Network:** NEAR testnet, with a test stablecoin (tUSDC)
 - **Status:** in development
@@ -197,8 +200,8 @@ was written during the hackathon on the `near-hackathon` branch:
 
 **Hackathon work:** everything after the `pre-hackathon` tag.
 
-- Full diff: [`pre-hackathon...main`](https://github.com/BreadchainCoop/saving-circles-near/compare/pre-hackathon...main)
-  (becomes `pre-hackathon...hackathon-submission` when the submission is tagged)
+- Full diff: [`pre-hackathon...hackathon-submission`](https://github.com/BreadchainCoop/saving-circles-near/compare/pre-hackathon...hackathon-submission)
+  (the submission). Later work: [`hackathon-submission...main`](https://github.com/BreadchainCoop/saving-circles-near/compare/hackathon-submission...main).
 
 ## Repository layout
 
