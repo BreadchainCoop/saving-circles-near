@@ -179,6 +179,9 @@ export function CircleDetails({ circleId }: { circleId: string }) {
   const myDeposited = me ? me.deposits.reduce((s, d) => s + big(d), ZERO) + big(me.refund_owed) : ZERO;
   const [label, tone] = statusLabel(state.data, roundState.data);
   const ended = c.decommissioned || state.data === "MissedDeposit" || state.data === "Expired";
+  // The switches only make sense where a keeper runs `process_due`; a pre-funded
+  // balance can still be withdrawn anywhere.
+  const automatable = !!NEAR_CONFIG.keeper && !ended;
   // Deposits this member still owes: every round from the current one, minus
   // the current one if already paid. Before the start, all of them.
   const pendingDeposits = !me || ended ? 0 : !started ? n : collecting ? n - round - (depositedIn(me, round) ? 1 : 0) : 0;
@@ -374,7 +377,7 @@ export function CircleDetails({ circleId }: { circleId: string }) {
                   </Button>
                 )}
               </div>
-              {!ended && (pendingDeposits > 0 || !me.has_claimed) && !automation.data && (
+              {automatable && (pendingDeposits > 0 || !me.has_claimed) && !automation.data && (
                 <div className="flex w-full flex-col items-center gap-2 border-t border-paper-2 pt-4 text-sm text-surface-grey-2">
                   {automation.isError ? (
                     <>
@@ -388,7 +391,7 @@ export function CircleDetails({ circleId }: { circleId: string }) {
                   )}
                 </div>
               )}
-              {automation.data && !ended && (pendingDeposits > 0 || !me.has_claimed) && (
+              {automation.data && automatable && (pendingDeposits > 0 || !me.has_claimed) && (
                 <div className="flex w-full flex-col gap-4 border-t border-paper-2 pt-4">
                   {pendingDeposits > 0 && (
                     <AutomaticDeposits
@@ -396,7 +399,7 @@ export function CircleDetails({ circleId }: { circleId: string }) {
                       automation={automation.data}
                       pendingDeposits={pendingDeposits}
                       hasClaimed={me.has_claimed}
-                      disabled={automation.isFetching || !!pending}
+                      disabled={!!pending}
                       onDone={refresh}
                     />
                   )}
@@ -404,7 +407,7 @@ export function CircleDetails({ circleId }: { circleId: string }) {
                     <AutomaticClaims
                       circleId={c.id}
                       automation={automation.data}
-                      disabled={automation.isFetching || !!pending}
+                      disabled={!!pending}
                       onDone={refresh}
                     />
                   )}

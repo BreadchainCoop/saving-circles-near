@@ -1,5 +1,5 @@
 import { view } from "./rpc";
-import { GAS, NEAR_CONFIG, ONE_YOCTO } from "./config";
+import { GAS, NEAR_CONFIG, ONE_YOCTO, STORAGE_DEPOSIT_NEAR } from "./config";
 import { nearToYocto } from "../format";
 import type { Call, CircleView, U128 } from "./types";
 
@@ -27,21 +27,18 @@ const OFF: Automation = { deposits: false, claims: false, balance: "0" };
 export const getAutomation = async (circleId: string, member: string) =>
   (await view<Automation | null>(C(), "get_automation", { circle_id: circleId, member })) ?? OFF;
 
-/**
- * `set_automation` stores the member's settings the first time and charges the
- * storage to the attached NEAR. The contract refunds what it doesn't use, so
- * attaching it on every call is safe.
- */
-const AUTOMATION_STORAGE_NEAR = "0.01";
-
 export const automationCalls = {
-  /** Sets both flags at once: pass the current value of the one not changing. */
+  /**
+   * Sets both flags at once: pass the current value of the one not changing.
+   * The first call stores the settings and charges their storage to the
+   * attached NEAR; the contract refunds the rest, so attaching it every time is safe.
+   */
   set: (circleId: string, settings: { deposits: boolean; claims: boolean }): Call => ({
     receiverId: C(),
     methodName: "set_automation",
     args: { circle_id: circleId, ...settings },
     gasTGas: GAS.default,
-    depositYocto: nearToYocto(AUTOMATION_STORAGE_NEAR),
+    depositYocto: nearToYocto(STORAGE_DEPOSIT_NEAR.automation),
   }),
 
   /** Returns the whole pre-funded balance. Works in any circle state. */

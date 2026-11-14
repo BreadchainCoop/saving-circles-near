@@ -168,7 +168,10 @@ function AutomaticDepositsModal({
   const [enabling] = useState(!automation.deposits);
   const [step, setStep] = useState<"intro" | "summary" | "insufficient">("intro");
   const { run, status, setStatus, error } = useTx(onDone);
-  const balance = BigInt(useTokenBalance().data ?? "0");
+  const tokenBalance = useTokenBalance();
+  // Until the balance loads, don't call it insufficient.
+  const balanceKnown = tokenBalance.data !== undefined;
+  const balance = BigInt(tokenBalance.data ?? "0");
 
   const deposit = BigInt(circle.deposit_amount);
   const total = deposit * BigInt(Math.max(0, pendingDeposits));
@@ -177,6 +180,7 @@ function AutomaticDepositsModal({
   const missing = topUp > balance ? topUp - balance : ZERO;
 
   const activate = () => {
+    if (!balanceKnown) return;
     if (missing > ZERO) return setStep("insufficient");
     // Settings first: the contract refuses a pre-fund until they exist.
     const calls = [automationCalls.set(circle.id, { deposits: true, claims: automation.claims })];
@@ -357,7 +361,6 @@ function AutomaticDepositsModal({
             value={<Amount value={topUp.toString()} className="border border-system-green px-2 py-1" />}
           />
         </dl>
-        <p className="m-0 text-sm text-surface-grey-2">1 {NEAR_CONFIG.token.symbol} = 1 USD</p>
       </div>
       <p className="m-0 text-center text-surface-grey-2">
         Your wallet asks you to approve turning automation on (0.01 NEAR for storage the first time, the unused
@@ -367,6 +370,7 @@ function AutomaticDepositsModal({
         fullWidth
         className="bg-system-green hover:bg-system-green/90"
         rightIcon={<HandDepositIcon size={20} />}
+        disabled={!balanceKnown}
         onClick={activate}
       >
         {topUp > ZERO ? "Pre-fund and activate" : "Activate"}
@@ -425,7 +429,7 @@ function AutomaticClaimsModal({
   onDone: () => Promise<unknown>;
 }) {
   const [enabling] = useState(!automation.claims);
-  const { run, status, setStatus } = useTx(onDone);
+  const { run, status, setStatus, error } = useTx(onDone);
 
   if (status !== "idle") {
     return (
@@ -454,7 +458,9 @@ function AutomaticClaimsModal({
         )}
         {status === "error" && (
           <>
-            <p className="m-0 text-center font-bold text-surface-grey-2">Something went wrong. Please try again!</p>
+            <p className="m-0 break-words text-center font-bold text-surface-grey-2">
+              {error ?? "Something went wrong. Please try again!"}
+            </p>
             <Button variant="destructive" fullWidth onClick={() => setStatus("idle")}>
               Try again
             </Button>
