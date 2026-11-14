@@ -106,7 +106,6 @@ export function CircleDetails({ circleId }: { circleId: string }) {
     queryKey: ["automation", circleId, accountId],
     queryFn: () => getAutomation(circleId, accountId!),
     enabled: isMember,
-    retry: false,
     refetchInterval: REFRESH_MS,
   });
   const balance = useTokenBalance();
@@ -375,6 +374,20 @@ export function CircleDetails({ circleId }: { circleId: string }) {
                   </Button>
                 )}
               </div>
+              {!ended && (pendingDeposits > 0 || !me.has_claimed) && !automation.data && (
+                <div className="flex w-full flex-col items-center gap-2 border-t border-paper-2 pt-4 text-sm text-surface-grey-2">
+                  {automation.isError ? (
+                    <>
+                      <p className="m-0">Couldn&apos;t load your automatic deposits and claims.</p>
+                      <Button size="sm" variant="light" onClick={() => automation.refetch()}>
+                        Try again
+                      </Button>
+                    </>
+                  ) : (
+                    <p className="m-0">Loading automatic deposits and claims…</p>
+                  )}
+                </div>
+              )}
               {automation.data && !ended && (pendingDeposits > 0 || !me.has_claimed) && (
                 <div className="flex w-full flex-col gap-4 border-t border-paper-2 pt-4">
                   {pendingDeposits > 0 && (
