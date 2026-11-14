@@ -55,6 +55,14 @@ export const NEAR_CONFIG = {
   },
   /** The test token mints to anyone; real tokens don't. */
   faucet: testToken,
+  /**
+   * The account that calls `process_due` on this contract. Bread's keeper serves the committed
+   * testnet deployment only; anywhere else, automatic deposits and claims need one named here.
+   * Without a keeper the app hides the automation switches, since nothing would run them.
+   */
+  keeper:
+    process.env.NEXT_PUBLIC_KEEPER_ID ||
+    (networkId === "testnet" && !process.env.NEXT_PUBLIC_CONTRACT_ID ? "bread-keeper.testnet" : null),
 };
 
 /** Gas in TGas, converted to gas units by the client. */
@@ -74,4 +82,6 @@ export const ONE_YOCTO = "1";
 export const STORAGE_DEPOSIT_NEAR = {
   create: "0.01",
   perMember: "0.005",
+  /** `set_automation`, first call only; attached every time and refunded when unused. */
+  automation: "0.01",
 };

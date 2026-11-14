@@ -13,6 +13,7 @@ import {
 import { useWallet } from "@/providers/wallet";
 import { useTokenBalance } from "@/hooks/use-token-balance";
 import { circleCalls, circles } from "@/lib/near/circles";
+import { automationCalls, getAutomation } from "@/lib/near/automation";
 import { NEAR_CONFIG } from "@/lib/near/config";
 import { accountExists } from "@/lib/near/rpc";
 import { isAccountId, MAX_MEMBERS, MIN_MEMBERS, normalizeAccountId } from "@/lib/near/account";
@@ -28,6 +29,7 @@ import { StatRow } from "@/components/ui/stat-row";
 import { FaucetButton } from "@/components/navbar/faucet-button";
 import { RoundCountdown, useNow } from "./countdown";
 import { MembersList, type MemberRow } from "./members-list";
+import { AutomaticClaims, AutomaticDeposits } from "./automation";
 
 const REFRESH_MS = 15_000;
 const ZERO = BigInt(0);
@@ -97,6 +99,12 @@ export function CircleDetails({ circleId }: { circleId: string }) {
   const canDecommission = useQuery({
     queryKey: ["can-decommission", circleId],
     queryFn: () => circles.isDecommissionable(circleId),
+    enabled: isMember,
+    refetchInterval: REFRESH_MS,
+  });
+  const automation = useQuery({
+    queryKey: ["automation", circleId, accountId],
+    queryFn: () => getAutomation(circleId, accountId!),
     enabled: isMember,
     refetchInterval: REFRESH_MS,
   });
@@ -170,6 +178,14 @@ export function CircleDetails({ circleId }: { circleId: string }) {
   );
   const myDeposited = me ? me.deposits.reduce((s, d) => s + big(d), ZERO) + big(me.refund_owed) : ZERO;
   const [label, tone] = statusLabel(state.data, roundState.data);
+  const ended = c.decommissioned || state.data === "MissedDeposit" || state.data === "Expired";
+  // The switches only make sense where a keeper runs `process_due`; a pre-funded
+  // balance can still be withdrawn anywhere.
+  const automatable = !!NEAR_CONFIG.keeper && !ended;
+  // Deposits this member still owes: every round from the current one, minus
+  // the current one if already paid. Before the start, all of them.
+  const pendingDeposits = !me || ended ? 0 : !started ? n : collecting ? n - round - (depositedIn(me, round) ? 1 : 0) : 0;
+  const prefunded = big(automation.data?.balance);
 
   // ------------------------------------------------------------ actions
   const actions: { label: string; calls: Call[]; variant?: "destructive" | "light"; icon?: ReactNode }[] = [];
@@ -189,6 +205,10 @@ export function CircleDetails({ circleId }: { circleId: string }) {
     }
     if (big(me.refund_owed) > ZERO) {
       actions.push({ label: "Claim refund", calls: [circleCalls.claimRefund(c.id, me.account_id)] });
+    }
+    // Left over after the last round, or when the circle ended early.
+    if (prefunded > ZERO && (ended || !automation.data?.deposits)) {
+      actions.push({ label: "Withdraw pre-funded", calls: [automationCalls.withdrawPrefund(c.id)] });
     }
     if (canDecommission.data) {
       actions.push({ label: "End circle", calls: [circleCalls.decommission(c.id)], variant: "destructive" });
@@ -315,6 +335,10 @@ export function CircleDetails({ circleId }: { circleId: string }) {
                       <>
                         Withdraw <Amount value={pot.toString()} />
                       </>
+                    ) : a.label === "Withdraw pre-funded" ? (
+                      <>
+                        Withdraw pre-funded <Amount value={prefunded.toString()} />
+                      </>
                     ) : a.label === "Claim refund" ? (
                       <>
                         Claim refund of <Amount value={me.refund_owed} />
@@ -353,6 +377,42 @@ export function CircleDetails({ circleId }: { circleId: string }) {
                   </Button>
                 )}
               </div>
+              {automatable && (pendingDeposits > 0 || !me.has_claimed) && !automation.data && (
+                <div className="flex w-full flex-col items-center gap-2 border-t border-paper-2 pt-4 text-sm text-surface-grey-2">
+                  {automation.isError ? (
+                    <>
+                      <p className="m-0">Couldn&apos;t load your automatic deposits and claims.</p>
+                      <Button size="sm" variant="light" onClick={() => automation.refetch()}>
+                        Try again
+                      </Button>
+                    </>
+                  ) : (
+                    <p className="m-0">Loading automatic deposits and claims…</p>
+                  )}
+                </div>
+              )}
+              {automation.data && automatable && (pendingDeposits > 0 || !me.has_claimed) && (
+                <div className="flex w-full flex-col gap-4 border-t border-paper-2 pt-4">
+                  {pendingDeposits > 0 && (
+                    <AutomaticDeposits
+                      circle={c}
+                      automation={automation.data}
+                      pendingDeposits={pendingDeposits}
+                      hasClaimed={me.has_claimed}
+                      disabled={!!pending}
+                      onDone={refresh}
+                    />
+                  )}
+                  {!me.has_claimed && (
+                    <AutomaticClaims
+                      circleId={c.id}
+                      automation={automation.data}
+                      disabled={!!pending}
+                      onDone={refresh}
+                    />
+                  )}
+                </div>
+              )}
             </>
           )}
           {error && <p className="m-0 break-words text-sm text-system-red">{error}</p>}
